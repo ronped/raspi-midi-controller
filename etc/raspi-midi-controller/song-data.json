@@ -1,0 +1,512 @@
+[
+ {
+  "parts": [
+   {
+    "HOG2-params": {
+     "115": 69, 
+     "114": 0, 
+     "88": 0, 
+     "116": 2, 
+     "111": 0, 
+     "110": 0, 
+     "113": 0, 
+     "112": 14, 
+     "87": 0, 
+     "4": 0, 
+     "7": 91, 
+     "128": 0, 
+     "108": 0, 
+     "109": 0, 
+     "102": 80, 
+     "103": 28, 
+     "106": 0, 
+     "107": 28, 
+     "104": 32, 
+     "105": 0, 
+     "36": 0, 
+     "89": 0, 
+     "90": 0
+    }, 
+    "program": 19, 
+    "name": "Intro"
+   }, 
+   {
+    "HOG2-params": {
+     "115": 69, 
+     "114": 0, 
+     "88": 0, 
+     "116": 2, 
+     "111": 0, 
+     "110": 0, 
+     "113": 0, 
+     "112": 14, 
+     "87": 0, 
+     "4": 0, 
+     "7": 91, 
+     "128": 0, 
+     "108": 0, 
+     "109": 0, 
+     "102": 80, 
+     "103": 28, 
+     "106": 0, 
+     "107": 28, 
+     "104": 32, 
+     "105": 0, 
+     "36": 0, 
+     "89": 0, 
+     "90": 0
+    }, 
+    "program": 19, 
+    "name": "Verse 1"
+   }, 
+   {
+    "HOG2-params": {
+     "115": 69, 
+     "114": 0, 
+     "88": 0, 
+     "116": 2, 
+     "111": 0, 
+     "110": 0, 
+     "113": 0, 
+     "112": 14, 
+     "102": 80, 
+     "87": 0, 
+     "4": 0, 
+     "7": 91, 
+     "108": 0, 
+     "109": 0, 
+     "128": 2, 
+     "103": 28, 
+     "106": 0, 
+     "107": 28, 
+     "104": 32, 
+     "105": 0, 
+     "36": 0, 
+     "89": 0, 
+     "90": 0
+    }, 
+    "program": 19, 
+    "name": "Chorus 1"
+   }, 
+   {
+    "HOG2-params": {
+     "115": 69, 
+     "114": 0, 
+     "88": 0, 
+     "116": 2, 
+     "111": 0, 
+     "110": 0, 
+     "113": 0, 
+     "112": 14, 
+     "102": 80, 
+     "87": 0, 
+     "4": 0, 
+     "7": 91, 
+     "108": 0, 
+     "109": 0, 
+     "128": 0, 
+     "103": 28, 
+     "106": 0, 
+     "107": 28, 
+     "104": 32, 
+     "105": 0, 
+     "36": 0, 
+     "89": 0, 
+     "90": 0
+    }, 
+    "program": 20, 
+    "name": "Verse 2"
+   }, 
+   {
+    "program": 20, 
+    "name": "Chorus 2"
+   }, 
+   {
+    "program": 20, 
+    "name": "Instrumental"
+   }, 
+   {
+    "program": 20, 
+    "name": "Chorus Last"
+   }
+  ], 
+  "name": "Hey Boy"
+ }, 
+ {
+  "parts": [
+   {
+    "program": 18, 
+    "name": "Intro"
+   }, 
+   {
+    "program": 16, 
+    "name": "Verse 1"
+   }, 
+   {
+    "program": 18, 
+    "name": "Chorus 1"
+   }, 
+   {
+    "program": 16, 
+    "name": "Verse 2"
+   }, 
+   {
+    "program": 18, 
+    "name": "Chorus 2"
+   }, 
+   {
+    "program": 26, 
+    "name": "Solo - Part I"
+   }, 
+   {
+    "program": 25, 
+    "name": "Solo - Part II"
+   }, 
+   {
+    "program": 18, 
+    "name": "Chorus Last"
+   }
+  ], 
+  "name": "Angels Falling Down"
+ }, 
+ {
+  "parts": [
+   {
+    "program": 16, 
+    "name": "Intro/Verse"
+   }, 
+   {
+    "program": 21, 
+    "name": "Chorus"
+   }, 
+   {
+    "program": 30, 
+    "name": "Verse 2"
+   }, 
+   {
+    "program": 21, 
+    "name": "Chorus 2"
+   }, 
+   {
+    "program": 22, 
+    "name": "Solo"
+   }
+  ], 
+  "name": "Devils Reign"
+ }, 
+ {
+  "parts": [
+   {
+    "program": 30, 
+    "name": "Intro/Verse 1"
+   }, 
+   {
+    "program": 18, 
+    "name": "Chorus"
+   }, 
+   {
+    "program": 16, 
+    "name": "Verse 2"
+   }, 
+   {
+    "program": 18, 
+    "name": "Chorus 2"
+   }, 
+   {
+    "program": 30, 
+    "name": "Instrumental"
+   }, 
+   {
+    "program": 25, 
+    "name": "Instrumental 2"
+   }, 
+   {
+    "program": 28, 
+    "name": "Instrumental Solo"
+   }, 
+   {
+    "program": 29, 
+    "name": "Instrumental Solo"
+   }
+  ], 
+  "name": "Euphoria"
+ }, 
+ {
+  "parts": [
+   {
+    "program": 16, 
+    "name": "Intro/Verse"
+   }, 
+   {
+    "program": 21, 
+    "name": "Chorus"
+   }, 
+   {
+    "program": 21, 
+    "name": "Verse 2"
+   }, 
+   {
+    "program": 21, 
+    "name": "Chorus 2"
+   }, 
+   {
+    "program": 23, 
+    "name": "Solo"
+   }, 
+   {
+    "program": 21, 
+    "name": "Post Solo"
+   }, 
+   {
+    "program": 21, 
+    "name": "Chorus Last"
+   }
+  ], 
+  "name": "Prophet"
+ }, 
+ {
+  "parts": [
+   {
+    "program": 27, 
+    "name": "Intro/Verse 1"
+   }, 
+   {
+    "program": 25, 
+    "name": "Chorus"
+   }, 
+   {
+    "program": 30, 
+    "name": "Verse 2"
+   }, 
+   {
+    "program": 25, 
+    "name": "Chorus 2"
+   }, 
+   {
+    "program": 30, 
+    "name": "Bridge 1"
+   }, 
+   {
+    "program": 16, 
+    "name": "Bridge 2"
+   }, 
+   {
+    "program": 25, 
+    "name": "Chorus Last"
+   }
+  ], 
+  "name": "Engines"
+ }, 
+ {
+  "parts": [
+   {
+    "program": 18, 
+    "name": "Intro"
+   }, 
+   {
+    "program": 27, 
+    "name": "Verse 1"
+   }, 
+   {
+    "program": 25, 
+    "name": "Chorus"
+   }, 
+   {
+    "program": 27, 
+    "name": "Verse 2"
+   }, 
+   {
+    "program": 25, 
+    "name": "Chorus 2"
+   }, 
+   {
+    "program": 23, 
+    "name": "Solo"
+   }, 
+   {
+    "program": 25, 
+    "name": "Post Solo"
+   }, 
+   {
+    "program": 25, 
+    "name": "Chorus Last"
+   }
+  ], 
+  "name": "Sycamore Tree (Rune Sang "
+ }, 
+ {
+  "parts": [
+   {
+    "program": 25, 
+    "name": "Intro"
+   }, 
+   {
+    "program": 20, 
+    "name": "Verse 1"
+   }, 
+   {
+    "program": 25, 
+    "name": "Chorus"
+   }, 
+   {
+    "program": 20, 
+    "name": "Verse 2"
+   }, 
+   {
+    "program": 25, 
+    "name": "Chorus 2"
+   }, 
+   {
+    "program": 24, 
+    "name": "Solo"
+   }, 
+   {
+    "program": 25, 
+    "name": "Post Solo"
+   }, 
+   {
+    "program": 25, 
+    "name": "Chorus Last"
+   }
+  ], 
+  "name": "New Groove"
+ }, 
+ {
+  "parts": [
+   {
+    "program": 30, 
+    "name": "New part"
+   }, 
+   {
+    "program": 18, 
+    "name": "New part"
+   }, 
+   {
+    "program": 25, 
+    "name": "New part"
+   }, 
+   {
+    "program": 30, 
+    "name": "New part"
+   }, 
+   {
+    "program": 18, 
+    "name": "New part"
+   }, 
+   {
+    "program": 25, 
+    "name": "New part"
+   }
+  ], 
+  "name": "fish"
+ }, 
+ {
+  "parts": [
+   {
+    "program": 8, 
+    "Strymon-Timeline-params": {
+     "15": 128, 
+     "14": 70, 
+     "17": 128, 
+     "16": 128, 
+     "19": 5, 
+     "18": 50, 
+     "9": 20, 
+     "3": 50, 
+     "128": 128
+    }, 
+    "name": "Fuzz Face-Reverse"
+   },
+   {
+    "program": 9, 
+    "Strymon-Timeline-params": {
+     "15": 128, 
+     "14": 80, 
+     "17": 128, 
+     "16": 128, 
+     "19": 0, 
+     "18": 50, 
+     "9": 70, 
+     "3": 60, 
+     "128": 128
+    },  
+    "HOG2-params": {
+     "115": 69, 
+     "114": 0, 
+     "88": 0, 
+     "116": 2, 
+     "111": 50, 
+     "110": 60, 
+     "113": 70, 
+     "112": 44, 
+     "102": 80, 
+     "87": 0, 
+     "4": 0, 
+     "7": 91, 
+     "108": 40, 
+     "109": 34, 
+     "128": 128, 
+     "103": 50, 
+     "106": 60, 
+     "107": 58, 
+     "104": 52, 
+     "105": 40, 
+     "36": 0, 
+     "89": 0, 
+     "90": 0
+    }, 
+   "name": "Organ Fuzz"
+   },
+   {
+    "program": 11, 
+    "Strymon-Timeline-params": {
+     "15": 128, 
+     "14": 80, 
+     "17": 128, 
+     "16": 128, 
+     "19": 0, 
+     "18": 50, 
+     "9": 70, 
+     "3": 60, 
+     "128": 128
+    }, 
+    "Strymon-Mobius-params": {
+     "15": 120, 
+     "17": 80, 
+     "16": 128, 
+     "19": 7, 
+     "18": 100, 
+     "9": 128, 
+     "128": 128
+    }, 
+    "HOG2-params": {
+     "115": 69, 
+     "114": 0, 
+     "88": 0, 
+     "116": 2, 
+     "111": 50, 
+     "110": 60, 
+     "113": 70, 
+     "112": 44, 
+     "102": 80, 
+     "87": 0, 
+     "4": 0, 
+     "7": 91, 
+     "108": 40, 
+     "109": 34, 
+     "128": 128, 
+     "103": 50, 
+     "106": 60, 
+     "107": 58, 
+     "104": 52, 
+     "105": 40, 
+     "36": 0, 
+     "89": 0, 
+     "90": 0
+    }, 
+    "name": "Tremolo Organ"
+   }
+  ], 
+  "name": "Demo"
+ }
+]

@@ -1,0 +1,1224 @@
+#!/usr/bin/env python
+import RPi.GPIO as GPIO, serial, time, signal, sys, getopt, curses, json, thread, threading, copy, string, os, pygame
+
+
+class MidiDevice:
+    MIDI_CAP_TYPE_VALUE, MIDI_CAP_TYPE_ENUM, MIDI_CAP_TYPE_PROGRAM = range(3)
+                        
+    def __init__(self, _capability_file, _settings_file):
+        self.settings_data = {}
+        self.parameter_state = {}
+        self.loaded_program_state = {}
+        self.capability_data = {}
+        self.settings_file = _settings_file
+        self.capability_file = _capability_file
+        self.load_settings_data()
+        self.load_capability_data()
+        self.init_parameter_state()
+
+    def init_parameter_state(self):
+        for parameter in self.capability_data["parameters"]:        
+            self.parameter_state[str(parameter["cc"])] = parameter["default"] if ("default" in parameter.keys()) else 0
+        self.loaded_program_state = {"params" : copy.deepcopy(self.parameter_state), "name" : self.get_program_name()}
+            
+    def set_parameter_state(self, param_state):
+        debug_out(json.dumps(param_state))
+        for cc in self.get_parameter_state():        
+            self.get_parameter_state()[cc] = param_state[cc] if cc in param_state else 128
+
+    def store_parameter_program(self):
+        program = 128 
+        if "128" in self.get_parameter_state():
+            program = self.get_parameter_state()["128"]
+        if program < 128:
+            if (not str(program) in self.settings_data["programs"].keys()):
+                self.settings_data["programs"][str(program)] = {}
+            self.settings_data["programs"][str(program)]["params"] = copy.deepcopy(self.parameter_state) 
+            self.loaded_program_state = copy.deepcopy(self.settings_data["programs"][str(program)])
+            self.save_settings_data()
+
+    def get_program_name(self):
+        program = 128 
+        if "128" in self.get_parameter_state():
+            program = self.get_parameter_state()["128"]
+        if (program < 128 and
+            "programs" in self.settings_data.keys() and
+            type(self.settings_data["programs"]) is dict and
+            str(program) in self.settings_data["programs"].keys() and
+            "name" in self.settings_data["programs"][str(program)]):
+            return self.settings_data["programs"][str(program)]["name"]
+        return "<empty>"
+
+    def set_program_name(self, name):
+        program = 128 
+        if "128" in self.get_parameter_state():
+            program = self.get_parameter_state()["128"]
+        if (program < 128 and
+            "programs" in self.settings_data.keys() and
+            str(program) in self.settings_data["programs"].keys()):
+            self.settings_data["programs"][str(program)]["name"] = name
+            self.save_settings_data()
+
+    def load_parameter_program(self):
+        program = 128 
+        if "128" in self.get_parameter_state():
+            program = self.get_parameter_state()["128"]
+        if (program < 128 and
+            "programs" in self.settings_data.keys() and
+            str(program) in self.settings_data["programs"].keys()):
+            self.set_parameter_state(self.settings_data["programs"][str(program)]["params"])
+            self.loaded_program_state = copy.deepcopy(self.settings_data["programs"][str(program)])
+
+    def parameter_state_changed(self, param_num):
+        param_cc = self.get_parameter_cc(param_num)
+        param_value = 128 
+        if str(param_cc) in self.get_parameter_state():
+            param_value = self.get_parameter_state()[str(param_cc)]
+        if (str(param_cc) == "128"):
+            return cmp(self.loaded_program_state["params"], self.parameter_state) != 0 if param_value < 128 else False
+        else:
+            return self.loaded_program_state["params"][str(param_cc)] != self.parameter_state[str(param_cc)]
+
+    def get_parameter_state(self):
+        return self.parameter_state
+
+    def get_device_channel(self):
+        return self.settings_data["channel"]
+
+    def inc_parameter_value(self, param, param_is_cc):
+        param_num = param if not param_is_cc else self.get_parameter_num(param)
+        if self.get_parameter_type(param_num) == self.MIDI_CAP_TYPE_ENUM:
+            enum_value = self.get_parameter_string_value(param, param_is_cc)
+            enum_keys = self.get_parameter_enum(param_num).keys()
+            index = enum_keys.index(enum_value)
+            new_index = (index + 1) % len(enum_keys) 
+            new_enum_value = enum_keys[new_index]
+            self.set_parameter_value(param, param_is_cc, self.get_parameter_enum(param_num)[new_enum_value])
+        else:
+            self.set_parameter_value(param, param_is_cc, (self.get_parameter_value(param, param_is_cc) + 1) % 129)
+
+    def dec_parameter_value(self, param, param_is_cc):
+        param_num = param if not param_is_cc else self.get_parameter_num(param)
+        if self.get_parameter_type(param_num) == self.MIDI_CAP_TYPE_ENUM:
+            enum_value = self.get_parameter_string_value(param, param_is_cc)
+            enum_keys = self.get_parameter_enum(param_num).keys()
+            index = enum_keys.index(enum_value)
+            new_index = len(enum_keys) - 1 if index == 0 else (index - 1)
+            new_enum_value = enum_keys[new_index]
+            self.set_parameter_value(param, param_is_cc, self.get_parameter_enum(param_num)[new_enum_value])
+        else:
+            param_value = self.get_parameter_value(self, param, param_is_cc)
+            self.set_parameter_value(param, param_is_cc, (param_value - 1 if param_value > 0 else 128))
+
+    def set_parameter_value(self, param, param_is_cc,  value):
+        param_cc = param if param_is_cc else self.get_parameter_cc(param)
+        self.parameter_state[str(param_cc)] = value
+        
+    def get_parameter_value(self, param, param_is_cc):
+        param_cc = param if param_is_cc else self.get_parameter_cc(param)
+        return self.parameter_state[str(param_cc)] if str(param_cc) in self.parameter_state.keys() else 128
+
+    def get_parameter_num(self, cc_code):
+        for parameter in self.capability_data["parameters"]:
+            if (parameter["cc"] == cc_code):
+                return self.capability_data["parameters"].index(parameter)
+        return -1 
+ 
+    def get_parameter_string_value(self, param, param_is_cc):
+        param_cc = param if param_is_cc else self.get_parameter_cc(param)
+        param_value = self.get_parameter_value(param_cc, True)
+        param_num = param if not param_is_cc else self.get_parameter_num(param)
+        if self.get_parameter_type(param_num) == self.MIDI_CAP_TYPE_ENUM:
+            for (name, value) in self.get_parameter_enum(param_num).items():
+                if value == param_value:
+                    return name
+            return ""
+        else:
+            return str(param_value) if param_value != 128 else "Skip"
+
+    def get_num_parameters(self):
+        return len(self.capability_data["parameters"])
+        
+    def get_parameter_info(self, param_num):
+        return self.capability_data["parameters"][param_num]
+
+    def get_parameter_cc(self, param_num):
+        return self.capability_data["parameters"][param_num]["cc"]
+
+    def get_parameter_name(self, param_num):
+        return self.capability_data["parameters"][param_num]["name"]
+
+    def get_parameter_type(self, param_num):
+        return self.capability_data["parameters"][param_num]["type"]
+
+    def parameter_is_program(self, param_num):
+        return self.capability_data["parameters"][param_num]["type"] == self.MIDI_CAP_TYPE_PROGRAM
+
+    def get_parameter_enum(self, param_num):
+        return self.capability_data["parameters"][param_num]["enum"]
+
+    def get_device_name(self):
+        return self.capability_data["device_name"]
+
+    def get_save_preset_cc(self):
+        return self.capability_data["save_preset_cc"]
+
+    def load_capability_data(self):
+        with open(self.capability_file, 'r') as infile:
+            self.capability_data = json.load(infile)
+        # Add "hidden" enum for skipping programming this parameter
+        for parameter in self.capability_data["parameters"]:
+            if parameter["type"] == self.MIDI_CAP_TYPE_ENUM:
+                parameter["enum"]["Skip"] = 128
+
+    def load_settings_data(self):
+        with open(self.settings_file, 'r') as infile:
+            self.settings_data = json.load(infile)
+
+    def save_settings_data(self):
+        with open(self.settings_file, 'w') as outfile:
+            json.dump(self.settings_data, outfile, indent=1)
+
+
+
+class GigrigG2MidiController:
+    def __init__(self, _midi_channel):
+        self.midi_event_callback_functions = []
+        self.engage_state=0
+        self.ser=serial.Serial('/dev/ttyAMA0',38400)		# Set up the UART  
+        # Reset gigrig
+        self.ser.write(chr(0xc3) + chr(0x0))
+        self.program=0
+        self.midi_channel=_midi_channel
+        self.waiting_for_midi_response = False
+        self.program_queue = [ ]
+        self.send_and_push_queue_semaphore = threading.Lock()
+        thread.start_new_thread(self.listen_for_midi_input, (0,))
+
+    def add_midi_event_callback(self,func):
+        self.midi_event_callback_functions.append(func)
+
+    def set_device_parameters(self, device):
+        channel = device.get_device_channel()
+        parameter_state = device.get_parameter_state()
+        for cc in parameter_state:
+            if parameter_state[cc] < 128:
+                if cc == 128:
+                    # Program change
+                    self.ser.write(chr(0xc0+channel) + chr(parameter_state[cc]))        
+                    time.sleep(0.005)
+                    debug_out ("Midi write: 0x%02x%02x" % ((0xc0+channel), (parameter_state[cc]))) 
+                else:
+                    # Normal CC parameter
+                    self.ser.write(chr(0xb0+channel) + chr(int(cc)) + chr(parameter_state[cc]))
+                    time.sleep(0.005)
+                    debug_out ("Midi write: 0x%02x%02x%02x" % ((0xb0+channel), (int(cc)), (parameter_state[cc]))) 
+    
+    def store_device_program(self, device):
+        channel         = device.get_device_channel()
+        save_preset_cc  = device.get_save_preset_cc()
+        parameter_state = device.get_parameter_state()
+        cur_program     = device.get_parameter_value(128, True)
+        if cur_program < 128:
+            self.ser.write(chr(0xb0+channel) + chr(int(save_preset_cc)) + chr(cur_program))
+            debug_out ("Midi write (store_device_program()): 0x%02x%02x%02x" % ((0xb0+channel), (int(save_preset_cc)), cur_program)) 
+
+    def set_gigrig_program(self, new_program):
+        self.send_and_push_queue_semaphore.acquire()
+        if (len(self.program_queue) > 10):
+            # Over 10 program change messages without a response. Assume that we do not have 
+            # a midi in connection so just clear queue
+            self.program_queue = [ ]
+
+        if ((new_program >= 16) & ~self.engage_state) | ((new_program < 16) & self.engage_state):
+            # Toggle engage
+            self.ser.write(chr(0xc0+self.midi_channel) + chr(0x10))        
+            debug_out ("Midi write: 0x%02x%02x" % (0xc0+self.midi_channel, 0x10)) 
+            self.ser.write(chr(0xfe))
+            self.engage_state ^= 1 
+            time.sleep(0.01)
+        if (self.program&0xf == new_program&0xf) :
+            # Same program (or same program in different bank). Need to toggle twice
+            if new_program&0xf == 0:
+                # We can not toggle program 0 twice so use program 1
+                self.ser.write(chr(0xc0+self.midi_channel) + chr(0x1)) 
+                debug_out ("Midi write: 0x%02x%02x" % (0xc0+self.midi_channel, 0x01))
+                self.program = 1
+                self.program_queue.append((new_program&0xf0)+1)
+            else :
+                self.ser.write(chr(0xc0+self.midi_channel) + chr(new_program&0xf))
+                debug_out ("Midi write: 0x%02x%02x" % (0xc0+self.midi_channel, (new_program&0xf))) 
+                self.program_queue.append(new_program&0xf0)
+            self.ser.write(chr(0xfe))
+
+        # If we are changing to program 0 then toggle the same button as was selected before
+        if new_program&0xf == 0:
+            # Enable bypass by toggling same button as we previously had selected
+            self.ser.write(chr(0xc0+self.midi_channel) + chr(self.program&0xf))
+            debug_out ("Midi write: 0x%02x%02x" % (0xc0+self.midi_channel, self.program&0xf)) 
+        else :
+            self.ser.write(chr(0xc0+self.midi_channel) + chr(new_program&0xf))
+            debug_out ("Midi write: 0x%02x%02x" % (0xc0+self.midi_channel, new_program&0xf)) 
+        self.ser.write(chr(0xfe))
+        self.program_queue.append(new_program)
+        self.program = new_program
+        self.send_and_push_queue_semaphore.release()
+            
+    def listen_for_midi_input(self, dummy):
+        while True:
+            readbyte = self.ser.read(1)
+            if ord(readbyte)&0xf0 == 0xc0:
+                # Received program change
+                channel = ord(readbyte) & 0xf
+                rcv_program = ord(self.ser.read(1))
+                if (len(self.program_queue) > 0) and ((self.program_queue[0]&0xf) == (rcv_program&0xf)):
+                    if self.program_queue[0] == rcv_program:
+                        # Received in the program we have changed, all is ok just pop from queue
+                        self.program_queue.pop(0)
+                    elif (self.program_queue[0]&0xf) == (rcv_program&0xf):
+                        # Looks like the bank engage button is in the wrong mode so toggle it and program again
+                        # make sure that we are not in the middle of two midi program change requests
+                        self.send_and_push_queue_semaphore.acquire()
+                        self.engage_state ^= 1
+                        self.program_queue.pop(0)
+                        self.send_and_push_queue_semaphore.release()
+                        self.set_gigrig_program(self.program)
+                else:
+                    debug_out ("Pr.change: Ch%d Pr%d" % (channel, rcv_program)) 
+                    if (len(self.program_queue) > 0):
+                        # Clear queue if we have it. Something must have gone wrong then
+                        self.program_queue = [ ]
+
+                    # Midi change initiated from gigrig 
+                    for callback in self.midi_event_callback_functions:
+                        callback(channel, rcv_program, self.state)
+                    if (channel == midi_channel):
+                        self.program = rcv_program
+                        if ((rcv_program&0xf0) != 0) != self.engage_state:
+                            self.engage_state ^= 1
+
+
+class GigrigProgramList:
+    def __init__(self, _data_file, load):
+        self.data_file  = _data_file
+        if load:
+            self.load_data();
+
+    def save_data(self):
+        with open(self.data_file, 'w') as outfile:
+            json.dump(self.data, outfile, indent=1)
+    
+    def load_data(self):
+        with open(self.data_file, 'r') as infile:
+            self.data = json.load(infile)
+
+    def get_program_info(self, program_nr):
+        return self.data[program_nr]
+
+    def set_program_info(self, program_nr, new_info):
+        self.data[program_nr] = new_info
+
+class SongList:
+    def __init__(self, data_filename, load_data, state_filename, load_state):
+        # Structures for holding information about songs and programs
+        self.current_song      = 0
+        self.current_song_part = 0        
+        self.data_filename     = data_filename 
+        self.state_filename    = state_filename 
+        if load_data:
+            self.load_data();
+        if load_state:
+            self.load_state();
+
+    def dump_state(self):
+        with open(self.state_filename, 'w+') as outfile:
+            json.dump((self.current_song, self.current_song_part), outfile, indent=1)
+            
+    def load_state(self):
+        try: 
+            with open(self.state_filename, 'r') as infile:
+                (self.current_song, self.current_song_part) = json.load(infile)
+        except:
+            self.current_song      = 0
+            self.current_song_part = 0        
+
+    def save_data(self):
+        with open(self.data_filename, 'w') as outfile:
+            json.dump(self.data, outfile, indent=1)
+    
+    def load_data(self):
+        with open(self.data_filename, 'r') as infile:
+            self.data = json.load(infile)
+    
+    def get_song_index(self):
+        return self.current_song
+
+    def get_song(self):
+        return self.data[self.current_song]
+
+    def insert_song(self, ins_song, after):
+        if after :
+            self.data.insert(self.current_song+1, ins_song)
+            self.incr_song()
+        else:
+            self.data.insert(self.current_song, ins_song)
+
+    def remove_song(self):
+        del self.data[self.current_song]
+        self.decr_song()
+    
+    def is_last_song(self):
+        return self.current_song == (len(self.data)-1)
+
+    def get_song_part_index(self):
+        return self.current_song_part
+
+    def get_song_part(self):
+        return self.data[self.current_song]["parts"][self.current_song_part]
+
+    def insert_song_part(self, ins_part, after):
+        if after :
+            self.data[self.current_song]["parts"].insert(self.current_song_part+1, ins_part)
+            self.incr_song_part()
+        else:
+            self.data[self.current_song]["parts"].insert(self.current_song_part, ins_part)
+ 
+    def remove_song_part(self):
+        del self.data[self.current_song]["parts"][self.current_song_part]
+        self.decr_song_part()
+
+    def is_last_part_in_song(self):
+        return self.current_song_part == (len(self.data[self.current_song]["parts"])-1)
+
+    def get_song_name(self):
+        return self.data[self.current_song]["name"]
+
+    def set_song_name(self, new_name):
+        self.data[self.current_song]["name"] = new_name
+
+    def get_song_part_name(self):
+        return self.data[self.current_song]["parts"][self.current_song_part]["name"]
+
+    def set_song_part_name(self, new_name):
+        self.data[self.current_song]["parts"][self.current_song_part]["name"] = new_name
+
+    def get_program(self):
+        return self.data[self.current_song]["parts"][self.current_song_part]["program"]
+    
+    def set_program(self, new_program):
+        self.data[self.current_song]["parts"][self.current_song_part]["program"] = new_program % 32
+
+    def get_midi_params(self, midi_device):
+        if midi_device+"-params" in self.data[self.current_song]["parts"][self.current_song_part]:
+            return copy.deepcopy(self.data[self.current_song]["parts"][self.current_song_part][midi_device+"-params"])
+        else:
+            return {}
+
+    def set_midi_params(self, midi_device, midi_params):
+        self.data[self.current_song]["parts"][self.current_song_part][midi_device+"-params"] = copy.deepcopy(midi_params); 
+
+    def incr_song_part(self):
+        self.current_song_part += 1
+        if self.current_song_part >= len(self.data[self.current_song]["parts"]) :
+            self.current_song_part = 0
+            self.incr_song()
+
+    def decr_song_part(self):
+        self.current_song_part -= 1
+        if self.current_song_part < 0:
+            self.decr_song()
+            self.current_song_part = len(self.data[self.current_song]["parts"]) - 1
+
+    def incr_song(self):
+        self.current_song = (self.current_song + 1) % len(self.data) 
+        if self.current_song_part >= len(self.data[self.current_song]["parts"]):
+            self.current_song_part = len(self.data[self.current_song]["parts"]) - 1
+            
+    
+    def decr_song(self):
+        self.current_song = (self.current_song - 1) % len(self.data) 
+        if self.current_song_part >= len(self.data[self.current_song]["parts"]):
+            self.current_song_part = len(self.data[self.current_song]["parts"]) - 1
+
+
+class State:
+    (STATE_NORMAL, 
+     STATE_MANUAL, 
+     STATE_EDIT_SELECT_PROP, 
+     STATE_EDIT_SELECT_OP_TYPE, 
+     STATE_EDIT_SELECT_INSERT_POINT, 
+     STATE_EDIT_EDIT_PROP, 
+     STATE_EDIT_SELECT_CONFIRM_OP, 
+     STATE_EDIT_MIDI_PARAMS, 
+     STATE_EDIT_STORE_MIDI_PROGRAM, 
+     NUM_STATES) = range(10)
+    
+    (PROP_SONG,
+     PROP_SONG_NAME,
+     PROP_SONG_PART, 
+     PROP_SONG_PART_NAME,
+     PROP_PROGRAM,
+     PROP_PROGRAM_INFO,
+     PROP_MIDI_DEVICE,
+     PROP_SAVE,
+     PROP_EXIT,
+     PROP_SHUTDOWN,
+     NUM_PROPS) = range(11)
+    
+    (OP_TYPE_COPY,
+     OP_TYPE_MOVE,
+     OP_TYPE_NEW,
+     OP_TYPE_DELETE,
+     OP_TYPE_CANCEL, 
+     NUM_OP_TYPES) = range(6)
+    
+    (INSERT_POINT_BEFORE,
+     INSERT_POINT_AFTER,
+     INSERT_POINT_CANCEL, 
+     NUM_INSERT_POINTS) = range(4)
+
+    (MIDI_PROGRAM_STATE_SELECT,
+     MIDI_PROGRAM_STATE_CHANGE_ACTION,
+     MIDI_PROGRAM_STATE_CHANGE_ACTION_NAME,
+     MIDI_PROGRAM_STATE_CHANGE_ACTION_LOAD,
+     MIDI_PROGRAM_STATE_CHANGE_ACTION_SAVE) = range(5)
+
+    (STATE_CHANGE_EVENT_PROGRAM_UP, 
+     STATE_CHANGE_EVENT_PROGRAM_DOWN,
+     STATE_CHANGE_EVENT_MOMENTARY_PUSH,
+     STATE_CHANGE_EVENT_MOMENTARY_HOLD_100MS,
+     STATE_CHANGE_EVENT_MOMENTARY_HOLD_500MS,
+     STATE_CHANGE_EVENT_MOMENTARY_HOLD_2S,
+     STATE_CHANGE_EVENT_MOMENTARY_HOLD_BURST,
+     STATE_CHANGE_EVENT_MOMENTARY_RELEASE) = range(8)
+
+    (BLINK_ON,
+     BLINK_OFF) = range(2)
+
+    def __init__(self, song_data, program_data, midi_devices, midi_controller):
+        self.state_change_callback = []
+        self.prop                = self.PROP_SONG
+        self.op_type             = self.OP_TYPE_COPY
+        self.insert_point        = self.INSERT_POINT_AFTER
+        self.hold_time_threshold = 2.0
+        self.confirm_hold_time_threshold = 0.5
+        self.prop_current_char   = 0
+        self.prop_current_char_value  = 97
+        self.prop_new_name       = list(" ")
+        self.prop_string_char_map = string.ascii_letters + string.digits + "./!_+- <>"
+        self.midi_device         = 0
+        self.midi_device_param   = 0
+        self.midi_program_state  = self.MIDI_PROGRAM_STATE_SELECT
+        self.cur_manual_program  = 0
+        self.song_data    = song_data
+        self.program_data = program_data
+        self.midi_devices = midi_devices
+        self.midi_controller = midi_controller
+	self.selected_song       = song_data.get_song()
+	self.selected_song_part  = song_data.get_song_part()
+        time.sleep(2)
+        self.midi_controller.state = self
+        self.midi_controller.set_gigrig_program(self.song_data.get_program())
+        for (device_name, device) in self.midi_devices.items():
+            midi_params = self.song_data.get_midi_params(device_name)
+            device.set_parameter_state(midi_params)
+            device.load_parameter_program()
+            if len(midi_params) > 0:
+                self.midi_controller.set_device_parameters(device)
+        self.state  = self.STATE_NORMAL
+        self.blink_state = State.BLINK_ON
+
+    def state_change(self):
+        for callback in self.state_change_callback:
+            callback(self)
+
+    def add_state_change_callback(self,callback):
+        self.state_change_callback.append(callback)
+
+    def state_change_event(self,event_type): 
+        enabled_events = ((1 << self.STATE_CHANGE_EVENT_PROGRAM_UP) | 
+                          (1 << self.STATE_CHANGE_EVENT_PROGRAM_DOWN))
+
+        program_change_event = ((event_type == self.STATE_CHANGE_EVENT_PROGRAM_UP) or
+                                (event_type == self.STATE_CHANGE_EVENT_PROGRAM_DOWN)) 
+        
+        if (self.state == self.STATE_MANUAL) :
+ 	    # Go back to current song and part and into normal mode
+	    self.midi_controller.set_gigrig_program(self.song_data.get_program())
+	    self.state = self.STATE_NORMAL
+	elif (self.state == self.STATE_NORMAL) :
+            if event_type == self.STATE_CHANGE_EVENT_MOMENTARY_HOLD_2S:
+                debug_out("STATE_EDIT_SELECT_PROP")
+                self.state = self.STATE_EDIT_SELECT_PROP 
+                self.prop  = self.PROP_SONG
+	    elif event_type == self.STATE_CHANGE_EVENT_PROGRAM_UP:
+	        self.song_data.incr_song_part()
+	    elif event_type == self.STATE_CHANGE_EVENT_PROGRAM_DOWN:
+	        self.song_data.decr_song_part()
+
+            if program_change_event:
+                self.midi_controller.set_gigrig_program(self.song_data.get_program())
+                for (device_name, device) in self.midi_devices.items():
+                    midi_params = self.song_data.get_midi_params(device_name)
+                    device.set_parameter_state(midi_params)
+                    device.load_parameter_program()
+                    debug_out( "Checking device : %s" % (device.get_device_name()))
+                    if len(midi_params) > 0:
+                        debug_out( "Loading parameters for device : %s" % (device.get_device_name()))
+                        self.midi_controller.set_device_parameters(device)
+                self.song_data.dump_state()
+	elif (self.state == self.STATE_EDIT_MIDI_PARAMS) :
+	    device = self.midi_devices[midi_devices.keys()[self.midi_device]]
+            if not program_change_event:
+                if self.midi_device_param < device.get_num_parameters(): 
+                    if (device.parameter_is_program(self.midi_device_param) and
+	                device.parameter_state_changed(self.midi_device_param) and
+	                self.midi_program_state != self.MIDI_PROGRAM_STATE_SELECT):
+                        self.midi_program_state = self.MIDI_PROGRAM_STATE_CHANGE_ACTION if self.midi_program_state == self.MIDI_PROGRAM_STATE_CHANGE_ACTION_SAVE else self.midi_program_state + 1
+                    else:
+                        device.inc_parameter_value(self.midi_device_param, False)
+                        self.midi_controller.set_device_parameters(device)
+                else:
+                    if self.midi_device_param == device.get_num_parameters():
+                        self.song_data.set_midi_params(device.get_device_name(), device.get_parameter_state())
+                    debug_out("STATE_EDIT_SELECT_PROP")
+                    self.state = self.STATE_NORMAL 
+            else:
+                update_device_param = True
+                if (self.midi_device_param < device.get_num_parameters() and
+                    device.parameter_is_program(self.midi_device_param) and
+                    device.parameter_state_changed(self.midi_device_param)):
+                    if self.midi_program_state == self.MIDI_PROGRAM_STATE_SELECT:
+                        self.midi_program_state = self.MIDI_PROGRAM_STATE_CHANGE_ACTION
+                        update_device_param = False
+                    else: 
+                        if self.midi_program_state == self.MIDI_PROGRAM_STATE_CHANGE_ACTION_SAVE:
+                            device.store_parameter_program()
+                            self.midi_controller.store_device_program(device)
+                            self.midi_program_state = self.MIDI_PROGRAM_STATE_SELECT
+                        elif self.midi_program_state == self.MIDI_PROGRAM_STATE_CHANGE_ACTION_LOAD:
+                            device.load_parameter_program()
+                            self.midi_controller.set_device_parameters(device)
+                            self.midi_program_state = self.MIDI_PROGRAM_STATE_SELECT
+                        elif self.midi_program_state == self.MIDI_PROGRAM_STATE_CHANGE_ACTION_NAME:
+                            self.state = self.STATE_EDIT_EDIT_PROP 
+                            self.prop_new_name = list(device.get_program_name())
+                            self.prop_current_char = 0
+                            self.prop_current_char_value = self.prop_string_char_map.find(self.prop_new_name[0])  
+                        else:
+                            self.midi_program_state = self.MIDI_PROGRAM_STATE_SELECT
+                if update_device_param:
+                    if event_type == self.STATE_CHANGE_EVENT_PROGRAM_UP:
+                        self.midi_device_param = (self.midi_device_param + 1) % (device.get_num_parameters()+2)
+                    elif event_type == self.STATE_CHANGE_EVENT_PROGRAM_DOWN:
+                        self.midi_device_param = (self.midi_device_param - 1) if self.midi_device_param > 0 else (device.get_num_parameters()+1)
+	elif (self.state == self.STATE_EDIT_SELECT_PROP):
+            if event_type == self.STATE_CHANGE_EVENT_PROGRAM_UP: 
+	        self.prop = (self.prop + 1) % self.NUM_PROPS
+            elif event_type == self.STATE_CHANGE_EVENT_PROGRAM_DOWN:
+	        self.prop = self.NUM_PROPS-1 if self.prop == 0 else (self.prop - 1)
+            else:
+                # Momentary button
+                if self.prop == self.PROP_PROGRAM:
+                    if event_type == self.STATE_CHANGE_EVENT_MOMENTARY_RELEASE:
+                        self.midi_controller.set_gigrig_program(self.song_data.get_program())
+                    else:
+                        self.song_data.set_program(self.song_data.get_program()+1)
+                elif self.prop == self.PROP_MIDI_DEVICE:
+                    if event_type == self.STATE_CHANGE_EVENT_MOMENTARY_HOLD_2S: 
+                        debug_out("STATE_EDIT_MIDI_PARAMS")
+                        self.state = self.STATE_EDIT_MIDI_PARAMS 
+                        self.midi_device_param = 0
+                        device = self.midi_devices[self.midi_devices.keys()[self.midi_device]]
+                        midi_params = self.song_data.get_midi_params(device.get_device_name())
+                        if len(midi_params) > 0:
+                            device.set_parameter_state(midi_params)
+                    else:
+                        self.midi_device = (self.midi_device + 1) % len(self.midi_devices)  
+                elif (self.prop == self.PROP_SONG) | (self.prop == self.PROP_SONG_PART):
+                    debug_out("STATE_EDIT_SELECT_OP_TYPE")
+                    self.state = self.STATE_EDIT_SELECT_OP_TYPE 
+                elif (self.prop == self.PROP_SAVE):
+                    debug_out("STATE_NORMAL")
+                    self.state = self.STATE_NORMAL 
+                    self.song_data.save_data()
+                    self.program_data.save_data()
+                elif (self.prop == self.PROP_EXIT):
+                    debug_out("STATE_NORMAL")
+                    self.state = self.STATE_NORMAL 
+                elif (self.prop == self.PROP_SHUTDOWN):
+                    debug_out("STATE_NORMAL")
+                    self.state = self.STATE_NORMAL 
+                    os.system("shutdown -h now")
+                else : 
+                    debug_out("STATE_EDIT_EDIT_PROP")
+                    self.state = self.STATE_EDIT_EDIT_PROP 
+                    if self.prop == self.PROP_PROGRAM_INFO:
+                        self.prop_new_name = list(self.program_data.get_program_info(self.song_data.get_program()))
+                    elif self.prop == self.PROP_SONG_NAME:
+                        self.prop_new_name = list(self.song_data.get_song_name())
+                    elif self.prop == self.PROP_SONG_PART_NAME:
+                        self.prop_new_name = list(self.song_data.get_song_part_name())
+                    self.prop_current_char = 0
+                    self.prop_current_char_value = self.prop_string_char_map.find(self.prop_new_name[0])  
+        elif (self.state == self.STATE_EDIT_SELECT_OP_TYPE):
+            if event_type == self.STATE_CHANGE_EVENT_PROGRAM_UP: 
+	        self.op_type = (self.op_type + 1) % self.NUM_OP_TYPES
+            elif event_type == self.STATE_CHANGE_EVENT_PROGRAM_DOWN:
+	        self.op_type = self.NUM_OP_TYPES-1 if self.op_type == 0 else (self.op_type - 1)
+            else :
+                # Momentary button
+                if self.op_type == self.OP_TYPE_CANCEL:
+                    self.state = self.STATE_NORMAL
+                    debug_out("STATE_NORMAL")
+                elif self.op_type == self.OP_TYPE_DELETE:
+                    if self.prop == self.PROP_SONG:
+                        self.song_data.remove_song();
+                    elif self.prop == self.PROP_SONG_PART:
+                        self.song_data.remove_song_part();
+                        self.song_data.save_data()
+                        self.state = self.STATE_NORMAL
+                        debug_out("STATE_NORMAL")
+                elif self.op_type == self.OP_TYPE_MOVE:
+                    self.selected_song       = self.song_data.get_song()
+                    self.selected_song_part  = self.song_data.get_song_part()
+                    if self.prop == self.PROP_SONG:
+                        self.song_data.remove_song();
+                    elif self.prop == self.PROP_SONG_PART:
+                        self.song_data.remove_song_part();
+                    self.state = self.STATE_EDIT_SELECT_INSERT_POINT
+                    debug_out("STATE_EDIT_SELECT_INSERT_POINT")
+                elif self.op_type == self.OP_TYPE_COPY:
+                    self.selected_song       = copy.deepcopy(self.song_data.get_song())
+                    self.selected_song_part  = copy.deepcopy(self.song_data.get_song_part())
+                    self.state = self.STATE_EDIT_SELECT_INSERT_POINT
+                    debug_out("STATE_EDIT_SELECT_INSERT_POINT")
+                elif self.op_type == self.OP_TYPE_NEW:
+                    self.selected_song       = { "name" : "New Song", "parts" :
+                                                     [ { "name" : "New part", "program" : 0} ] }
+                    self.selected_song_part  = { "name" : "New part", "program" : 0 }
+                    self.state = self.STATE_EDIT_SELECT_INSERT_POINT
+                    debug_out("STATE_EDIT_SELECT_INSERT_POINT")
+                    self.insert_point = self.INSERT_POINT_BEFORE
+	elif (self.state == self.STATE_EDIT_SELECT_INSERT_POINT):
+            if program_change_event:
+                if self.prop == self.PROP_SONG_PART:
+                    if event_type == self.STATE_CHANGE_EVENT_PROGRAM_UP: 
+                        if self.song_data.is_last_part_in_song() & (self.insert_point == self.INSERT_POINT_BEFORE):
+                            self.insert_point = self.INSERT_POINT_AFTER
+                        else:
+                            self.song_data.incr_song_part()
+                            self.insert_point = self.INSERT_POINT_BEFORE
+                    elif event_type == self.STATE_CHANGE_EVENT_PROGRAM_DOWN:
+                        if self.song_data.is_last_part_in_song() & (self.insert_point == self.INSERT_POINT_AFTER):
+                            self.insert_point = self.INSERT_POINT_BEFORE
+                        else:
+                            self.song_data.decr_song_part()
+                            if self.song_data.is_last_part_in_song():
+                                self.insert_point = self.INSERT_POINT_AFTER
+                else:	
+                    if event_type == self.STATE_CHANGE_EVENT_PROGRAM_UP: 
+                        if self.song_data.is_last_song() & (self.insert_point == self.INSERT_POINT_BEFORE):
+                            self.insert_point = self.INSERT_POINT_AFTER
+                        else:
+                            self.song_data.incr_song()
+                            self.insert_point = self.INSERT_POINT_BEFORE
+                    elif event_type == self.STATE_CHANGE_EVENT_PROGRAM_DOWN:
+                        if self.song_data.is_last_song() & (self.insert_point == self.INSERT_POINT_AFTER):
+                            self.insert_point = self.INSERT_POINT_BEFORE
+                        else:
+                            self.song_data.decr_song()
+                            if self.song_data.is_last_song():
+                                self.insert_point = self.INSERT_POINT_AFTER
+            else:
+                # Momentary button
+                debug_out("STATE_NORMAL")
+                self.state = self.STATE_NORMAL
+                if self.prop == self.PROP_SONG:
+                    self.song_data.insert_song(self.selected_song, self.insert_point == self.INSERT_POINT_AFTER)
+                elif self.prop == self.PROP_SONG_PART:
+                    self.song_data.insert_song_part(self.selected_song_part, self.insert_point == self.INSERT_POINT_AFTER)
+                self.song_data.save_data()    
+	elif (self.state == self.STATE_EDIT_EDIT_PROP):
+            if program_change_event:
+                if self.prop_string_char_map[self.prop_current_char_value] == '<':
+                    self.prop_new_name.pop(self.prop_current_char)
+                    self.prop_current_char = len(self.prop_new_name)-1 if self.prop_current_char == 0 else (self.prop_current_char - 1)
+                elif self.prop_string_char_map[self.prop_current_char_value] == '>':
+                    self.prop_new_name.pop(self.prop_current_char)
+                    only_update_midi = False
+                    if self.prop == self.PROP_PROGRAM_INFO:
+                        self.program_data.set_program_info(self.song_data.get_program(), "".join(self.prop_new_name[0:self.prop_current_char]))
+                    elif self.prop == self.PROP_SONG_NAME:
+                        self.song_data.set_song_name("".join(self.prop_new_name[0:self.prop_current_char]))
+                    elif self.prop == self.PROP_SONG_PART_NAME:
+                        self.song_data.set_song_part_name("".join(self.prop_new_name[0:self.prop_current_char]))
+                    elif self.prop == self.PROP_MIDI_DEVICE:
+                        device = self.midi_devices[midi_devices.keys()[self.midi_device]]
+                        device.set_program_name("".join(self.prop_new_name[0:self.prop_current_char]))
+                        only_update_midi = True
+                    self.prop_current_char -= 1
+                    if not only_update_midi:
+                        self.song_data.save_data()
+                        self.program_data.save_data()
+                        self.state = self.STATE_NORMAL
+                    else:
+                        self.state = self.STATE_EDIT_MIDI_PARAMS   
+                else:	
+                    if event_type == self.STATE_CHANGE_EVENT_PROGRAM_UP: 
+                        self.prop_current_char = (self.prop_current_char + 1) % 256
+                    elif event_type == self.STATE_CHANGE_EVENT_PROGRAM_DOWN:
+                        self.prop_current_char = len(self.prop_new_name)-1 if self.prop_current_char==0 else (self.prop_current_char - 1)
+	
+                    if (self.prop_current_char >= len(self.prop_new_name)):
+                        self.prop_new_name.append(' ')
+                self.prop_current_char_value = self.prop_string_char_map.find(self.prop_new_name[self.prop_current_char])  
+            else:
+                self.prop_current_char_value = (self.prop_current_char_value + 1) % len(self.prop_string_char_map)
+                self.prop_new_name[self.prop_current_char] = self.prop_string_char_map[self.prop_current_char_value]
+
+        # Set enabled events based on the next state
+        if (self.state == self.STATE_MANUAL) :
+            enabled_events = enabled_events | (1 << self.STATE_CHANGE_EVENT_MOMENTARY_HOLD_2S)  
+	elif (self.state == self.STATE_NORMAL) :
+            enabled_events = enabled_events | (1 << self.STATE_CHANGE_EVENT_MOMENTARY_HOLD_2S)  
+	elif (self.state == self.STATE_EDIT_MIDI_PARAMS) :
+            if (self.midi_device_param < device.get_num_parameters()):
+                enabled_events = (enabled_events |
+                                  (1 << self.STATE_CHANGE_EVENT_MOMENTARY_PUSH) |  
+                                  (1 << self.STATE_CHANGE_EVENT_MOMENTARY_HOLD_BURST))
+            else:
+                enabled_events = enabled_events | (1 << self.STATE_CHANGE_EVENT_MOMENTARY_HOLD_500MS)  
+	elif (self.state == self.STATE_EDIT_SELECT_PROP):
+            # Specify which buttons are enabled for the different edit properties
+            if self.prop == self.PROP_PROGRAM:
+                enabled_events = (enabled_events |
+                                  (1 << self.STATE_CHANGE_EVENT_MOMENTARY_PUSH) |  
+                                  (1 << self.STATE_CHANGE_EVENT_MOMENTARY_HOLD_BURST) |  
+                                  (1 << self.STATE_CHANGE_EVENT_MOMENTARY_RELEASE))  
+            elif self.prop == self.PROP_MIDI_DEVICE:
+                enabled_events = (enabled_events |
+                                  (1 << self.STATE_CHANGE_EVENT_MOMENTARY_HOLD_2S) |  
+                                  (1 << self.STATE_CHANGE_EVENT_MOMENTARY_RELEASE))  
+            else:
+                enabled_events = (enabled_events |
+                                  (1 << self.STATE_CHANGE_EVENT_MOMENTARY_HOLD_500MS))  
+	elif (self.state == self.STATE_EDIT_SELECT_INSERT_POINT):
+            enabled_events = (enabled_events |
+                              (1 << self.STATE_CHANGE_EVENT_MOMENTARY_HOLD_2S))  
+        elif (self.state == self.STATE_EDIT_SELECT_OP_TYPE):
+            enabled_events = (enabled_events |
+                              (1 << self.STATE_CHANGE_EVENT_MOMENTARY_HOLD_2S))  
+	elif (self.state == self.STATE_EDIT_EDIT_PROP):
+            enabled_events = (enabled_events |
+                              (1 << self.STATE_CHANGE_EVENT_MOMENTARY_PUSH) |  
+                              (1 << self.STATE_CHANGE_EVENT_MOMENTARY_HOLD_BURST))
+
+        self.state_change()
+        return enabled_events
+
+class Gui:
+    (GUI_TYPE_CURSES, GUI_TYPE_PYGAME) = range(2)
+
+
+    def __init__(self, type, edit_state):
+        self.display_char_width  = 25
+        self.display_char_height = 3
+        self.gui_type = type
+        if self.gui_type == self.GUI_TYPE_PYGAME:
+            self.init_pygame_window()
+        else:
+            self.init_curses_window()
+        self.state = edit_state
+        self.state.add_state_change_callback(self.updateDisplay)
+        self.edit_curses_attr  = curses.A_REVERSE
+
+    def exit(self):
+        if self.gui_type != self.GUI_TYPE_PYGAME:
+            curses.nocbreak() 
+            curses.echo()
+            curses.endwin()
+    
+    def init_pygame_window(self):
+        self.driver = "fbcon"
+        self.fbdev = "/dev/fb1"
+        # Make sure that SDL_VIDEODRIVER is set
+        if not os.getenv('SDL_VIDEODRIVER'):
+            os.putenv('SDL_VIDEODRIVER', driver)
+        if not os.getenv('SDL_FBDEV'):
+            os.putenv('SDL_FBDEV', fbdev)
+        try:
+            pygame.display.init()
+        except pygame.error:
+            print 'Driver: {0} failed.'.format(driver)
+            return False
+
+        self.surface = pygame.display.set_mode((0,0), pygame.NOFRAME)
+        # Initialise font support
+        pygame.font.init()
+        pygame.mouse.set_visible(0) 
+        self.font = pygame.font.SysFont("monospace", 12)
+        return True
+
+    def init_curses_window(self):
+        # Setup a curses screen to fit the display
+        self.screen = curses.initscr()
+        curses.noecho()
+        self.win = curses.newwin(self.display_char_height, self.display_char_width+1, 0, 0)
+        try:
+            curses.curs_set(0)
+        except:
+            pass
+
+    
+    def updateDisplay(self,state):
+        if self.gui_type == self.GUI_TYPE_PYGAME:
+            self.updateDisplayPygame()
+        else:
+            self.updateDisplayCurses()
+
+    def updateDisplayPygame(self):
+        text = self.font.render("test", 0, (255, 255, 255))
+        self.surface.blit(text, (0, 0))
+        pygame.display.update()
+
+    def updateDisplayCurses(self):
+        self.win.erase()
+        line_for_edit_menu = 2
+        midi_device = self.state.midi_devices[self.state.midi_devices.keys()[self.state.midi_device]]
+
+        if (self.state.state == State.STATE_EDIT_MIDI_PARAMS) & (self.state.midi_device_param < midi_device.get_num_parameters()):
+            self.win.addstr(0,0,"["+midi_device.get_device_name()[0:self.display_char_width-2] + "]", curses.A_BOLD)
+        elif (self.state.state == State.STATE_MANUAL):
+            self.win.addstr(0,0,"[MANUAL MODE]")
+        elif ((self.state.state == State.STATE_NORMAL) | (self.state.state == State.STATE_EDIT_SELECT_PROP) | 
+              ((self.state.prop != State.PROP_PROGRAM) & (self.state.prop != State.PROP_PROGRAM_INFO))) :
+            self.win.addstr(0,0,"[  ]", curses.A_BOLD)
+            if not (((self.state.state == State.STATE_EDIT_SELECT_PROP) or
+                     (self.state.state == State.STATE_EDIT_SELECT_INSERT_POINT)) and 
+                    (self.state.prop == State.PROP_SONG) and 
+                    (self.state.blink_state == State.BLINK_OFF)):
+                self.win.addstr(0,1, "{0:>2}".format(self.state.song_data.get_song_index()), curses.A_BOLD)
+            if not ((self.state.state == State.STATE_EDIT_SELECT_PROP) and
+                    (self.state.prop == State.PROP_SONG_NAME) and
+                    (self.state.blink_state == State.BLINK_OFF)):
+                self.win.addstr(0,5, self.state.song_data.get_song_name()[0:self.display_char_width-5], curses.A_BOLD)
+
+        if (self.state.state == State.STATE_EDIT_MIDI_PARAMS) & (self.state.midi_device_param < midi_device.get_num_parameters()):
+            self.win.addstr(1,0,midi_device.get_parameter_name(self.state.midi_device_param)[0:self.display_char_width], curses.A_BOLD)
+        elif (self.state.state == State.STATE_MANUAL):
+            self.win.addstr(1,0,"--------------")
+        elif (self.state.state == State.STATE_EDIT_SELECT_PROP) & (self.state.prop == State.PROP_MIDI_DEVICE) :
+            self.win.addstr(1,0,"Midi device params:", curses.A_NORMAL)
+        else: 
+            self.win.addstr(1,0," \[  ]", curses.A_BOLD)
+            if not (((self.state.state == State.STATE_EDIT_SELECT_PROP) or
+                     (self.state.state == State.STATE_EDIT_SELECT_INSERT_POINT)) and 
+                    (self.state.prop == State.PROP_SONG_PART) and 
+                    (self.state.blink_state == State.BLINK_OFF)):
+                self.win.addstr(1,3, "{0:>2}".format(self.state.song_data.get_song_part_index()), curses.A_BOLD)
+            if not ((self.state.state == State.STATE_EDIT_SELECT_PROP) and
+                    (self.state.prop == State.PROP_SONG_PART_NAME) and
+                    (self.state.blink_state == State.BLINK_OFF)):
+                self.win.addstr(1,7, self.state.song_data.get_song_part_name()[0:self.display_char_width-7], curses.A_BOLD)
+
+        if (self.state.state == State.STATE_EDIT_MIDI_PARAMS):
+            if self.state.midi_device_param == (midi_device.get_num_parameters()):
+                self.win.addstr(2,0,"Save & Exit", curses.A_BOLD)
+            elif self.state.midi_device_param == (midi_device.get_num_parameters()+1):
+                self.win.addstr(2,0,"Exit", curses.A_BOLD)
+            else :
+                self.win.addstr(2,0,midi_device.get_parameter_string_value(self.state.midi_device_param, False)[0:self.display_char_width], 
+                           self.edit_curses_attr if midi_device.parameter_state_changed(self.state.midi_device_param) else curses.A_BOLD)
+                if (midi_device.parameter_is_program(self.state.midi_device_param) and
+                    midi_device.get_parameter_value(self.state.midi_device_param, False) < 128):
+                    self.win.addstr(2,4,midi_device.get_program_name()[0:self.display_char_width-4], curses.A_BOLD)  
+                        
+                if (midi_device.parameter_is_program(self.state.midi_device_param) and
+                    midi_device.parameter_state_changed(self.state.midi_device_param)):
+                    if self.state.midi_program_state == State.MIDI_PROGRAM_STATE_CHANGE_ACTION:
+                        self.win.addstr(2,3," [Sel Action]", curses.A_BOLD)
+                    elif self.state.midi_program_state == State.MIDI_PROGRAM_STATE_CHANGE_ACTION_SAVE:
+                        self.win.addstr(2,3," <-- Save", curses.A_BOLD)
+                    elif self.state.midi_program_state == State.MIDI_PROGRAM_STATE_CHANGE_ACTION_LOAD:
+                        self.win.addstr(2,3," --> Load", curses.A_BOLD)
+        elif (self.state.state == State.STATE_EDIT_SELECT_PROP) & (self.state.prop == State.PROP_EXIT):
+            self.win.addstr(2,0, "Exit?", self.edit_curses_attr)
+        elif (self.state.state == State.STATE_EDIT_SELECT_PROP) & (self.state.prop == State.PROP_SAVE):
+            self.win.addstr(2,0, "Save?", self.edit_curses_attr)
+        elif (self.state.state == State.STATE_EDIT_SELECT_PROP) & (self.state.prop == State.PROP_SHUTDOWN):
+            self.win.addstr(2,0, "Shutdown?", self.edit_curses_attr)
+        elif (self.state.state == State.STATE_EDIT_SELECT_PROP) & (self.state.prop == State.PROP_MIDI_DEVICE):
+            self.win.addstr(2,0, "No midi devices" if len(self.state.midi_devices.keys()) == 0 else midi_device.get_device_name()[0:self.display_char_width], self.edit_curses_attr)
+        elif ((self.state.state == State.STATE_NORMAL) | (self.state.state == State.STATE_MANUAL) | 
+              (self.state.state == State.STATE_EDIT_SELECT_PROP) | 
+              (self.state.prop == State.PROP_PROGRAM_INFO)) :
+            line_for_edit_menu = 0
+            self.win.addstr(2,0, "P", curses.A_BOLD)
+            if not ((self.state.state == State.STATE_EDIT_SELECT_PROP) and 
+                    (self.state.prop == State.PROP_PROGRAM) and 
+                    (self.state.blink_state == State.BLINK_OFF)):
+                self.win.addstr(2,1, "{0:02}".format(self.state.cur_manual_program if self.state.state == State.STATE_MANUAL else self.state.song_data.get_program()), curses.A_BOLD)
+            self.win.addstr(2,3, ": ", curses.A_BOLD)
+            if not ((self.state.state == State.STATE_EDIT_SELECT_PROP) and 
+                    (self.state.prop == State.PROP_PROGRAM_INFO) and 
+                    (self.state.blink_state == State.BLINK_OFF)):
+                self.win.addstr(2,5, self.state.program_data.get_program_info(self.state.cur_manual_program if self.state.state == State.STATE_MANUAL else  self.state.song_data.get_program())[0:self.display_char_width-5], 
+                                curses.A_BOLD)
+        
+        if self.state.state == State.STATE_EDIT_SELECT_OP_TYPE:
+            self.win.addstr(line_for_edit_menu, 0, "Cpy", 
+                            self.edit_curses_attr if (self.state.op_type == State.OP_TYPE_COPY) else curses.A_NORMAL)
+            self.win.addstr(line_for_edit_menu, 3, "|")
+            self.win.addstr(line_for_edit_menu, 4, "Move", 
+                            self.edit_curses_attr if (self.state.op_type == State.OP_TYPE_MOVE) else curses.A_NORMAL)
+            self.win.addstr(line_for_edit_menu, 8, "|")
+            self.win.addstr(line_for_edit_menu, 9, "New", 
+                            self.edit_curses_attr if (self.state.op_type == State.OP_TYPE_NEW) else curses.A_NORMAL)
+            self.win.addstr(line_for_edit_menu, 12, "|")
+            self.win.addstr(line_for_edit_menu, 13, "Del", 
+                            self.edit_curses_attr if (self.state.op_type == State.OP_TYPE_DELETE) else curses.A_NORMAL)
+            self.win.addstr(line_for_edit_menu, 16, "|")
+            self.win.addstr(line_for_edit_menu, 17, "Cancel", 
+                            self.edit_curses_attr if (self.state.op_type == State.OP_TYPE_CANCEL) else curses.A_NORMAL)
+        elif self.state.state == State.STATE_EDIT_SELECT_INSERT_POINT:
+            if self.state.insert_point == State.INSERT_POINT_BEFORE:
+                self.win.addstr(line_for_edit_menu, 0, "Insert before")
+            else:
+                self.win.addstr(line_for_edit_menu, 0, "Insert after")
+        elif self.state.state == State.STATE_EDIT_SELECT_CONFIRM_OP:
+            self.win.addstr(line_for_edit_menu, 0, "Insert ")
+            self.win.addstr(line_for_edit_menu, 7, "Before",  
+                       self.edit_curses_attr if (self.state.insert_point == State.INSERT_POINT_BEFORE) else curses.A_NORMAL)
+            self.win.addstr(line_for_edit_menu, 13, "|")
+            self.win.addstr(line_for_edit_menu, 14, "After",
+                       self.edit_curses_attr if (self.state.insert_point == State.INSERT_POINT_AFTER) else curses.A_NORMAL)
+            self.win.addstr(line_for_edit_menu, 19, "|")
+            self.win.addstr(line_for_edit_menu, 20, "Cancel",
+                       self.edit_curses_attr if (self.state.insert_point == State.INSERT_POINT_CANCEL) else curses.A_NORMAL)
+        elif self.state.state == State.STATE_EDIT_EDIT_PROP:
+            cur_char_screen_offset = self.state.prop_current_char % self.display_char_width
+            first_char_offset = (self.state.prop_current_char / self.display_char_width)*self.display_char_width
+            if cur_char_screen_offset >= 0:
+                self.win.addstr(line_for_edit_menu, 0, "".join(self.state.prop_new_name[first_char_offset:first_char_offset+cur_char_screen_offset]))
+                if self.state.blink_state == State.BLINK_ON:
+                    self.win.addstr(line_for_edit_menu, cur_char_screen_offset, "".join(self.state.prop_new_name[first_char_offset+cur_char_screen_offset]), self.edit_curses_attr)
+                self.win.addstr(line_for_edit_menu, cur_char_screen_offset+1, "".join(self.state.prop_new_name[first_char_offset+cur_char_screen_offset+1:first_char_offset+self.display_char_width]))
+        self.win.refresh()
+
+
+class InputDevice:
+    LED=16
+    PREV_PROGRAM_BUTTON=11
+    NEXT_PROGRAM_BUTTON=7
+    MOMENTARYBUTTON=13
+
+    instances = []
+
+    @staticmethod
+    def program_button_callback(channel):
+        for instance in InputDevice.instances:
+            instance.programButtonStateChange(channel)
+
+    @staticmethod
+    def momentary_button_callback(channel):
+        for instance in InputDevice.instances:
+            instance.momentaryButtonStateChange(channel)
+    
+    def __init__(self, state):
+        if len(InputDevice.instances) > 1:
+            print >> sys.stderr, "Error: Trying to instantiate multiple instances of InputDevice"
+            return
+
+        # Setup GPIO pins
+        GPIO.setmode(GPIO.BOARD)
+        GPIO.setup(self.LED, GPIO.OUT)
+        GPIO.setup(self.PREV_PROGRAM_BUTTON, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+        GPIO.setup(self.NEXT_PROGRAM_BUTTON, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+        GPIO.setup(self.MOMENTARYBUTTON, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+
+        # Turn on LED
+        GPIO.output(self.LED, True)
+
+        self.prevProgramButtonState  = GPIO.input(self.PREV_PROGRAM_BUTTON)
+        self.nextProgramButtonState  = GPIO.input(self.NEXT_PROGRAM_BUTTON)
+        self.momentaryButtonState    = GPIO.input(self.MOMENTARYBUTTON)
+
+        GPIO.add_event_detect(self.PREV_PROGRAM_BUTTON, GPIO.BOTH, callback=InputDevice.program_button_callback, bouncetime=0)
+        GPIO.add_event_detect(self.NEXT_PROGRAM_BUTTON, GPIO.BOTH, callback=InputDevice.program_button_callback, bouncetime=0)
+        GPIO.add_event_detect(self.MOMENTARYBUTTON, GPIO.FALLING, callback=InputDevice.momentary_button_callback, bouncetime=100)
+
+        self.program_button_event_lock = threading.Lock()
+	self.momentary_button_event_lock = threading.Lock()
+        self.momentary_button_push_time = time.time()
+
+        self.enabled_events = ((1 << State.STATE_CHANGE_EVENT_PROGRAM_UP) |
+                               (1 << State.STATE_CHANGE_EVENT_PROGRAM_DOWN) |
+                               (1 << State.STATE_CHANGE_EVENT_MOMENTARY_HOLD_2S))
+
+        self.state = state
+        self.state.blink_state = State.BLINK_ON
+        thread.start_new_thread(self.blink_handler, (0,))
+        InputDevice.instances.append(self)
+
+    def exit(self):
+        GPIO.output(self.LED, False)
+        GPIO.cleanup()
+
+        
+    def blink_handler(self,dummy):
+        while True:					# set up a loop...
+            if (self.state.state != State.STATE_NORMAL) & (self.state.state != State.STATE_MANUAL):
+                GPIO.output(self.LED, True if self.state.blink_state == State.BLINK_ON else False)
+                self.state.blink_state  = State.BLINK_OFF if self.state.blink_state == State.BLINK_ON else State.BLINK_ON
+                self.state.state_change()
+            else:
+                GPIO.output(self.LED, self.momentaryButtonState) # LED is off if button pushed
+                self.state.blink_state = State.BLINK_ON
+                self.state.state_change()
+
+            # Blink faster when in edit mode and momentary button is pushed
+            if self.momentaryButtonState == False:
+                time.sleep(0.125)
+            else:
+                time.sleep(0.25)
+
+
+    def programButtonStateChange(self,channel):
+        if self.program_button_event_lock.acquire() :
+            try:
+                newProgramButtonState=GPIO.input(self.PREV_PROGRAM_BUTTON) if channel == self.PREV_PROGRAM_BUTTON else GPIO.input(self.NEXT_PROGRAM_BUTTON)
+                if ((channel == self.PREV_PROGRAM_BUTTON and newProgramButtonState != self.prevProgramButtonState) or 
+                    (channel == self.NEXT_PROGRAM_BUTTON and newProgramButtonState != self.nextProgramButtonState)) :
+                    if channel == self.PREV_PROGRAM_BUTTON:
+                        if self.enabled_events & (1 << State.STATE_CHANGE_EVENT_PROGRAM_DOWN):
+                            self.enabled_events = self.state.state_change_event(State.STATE_CHANGE_EVENT_PROGRAM_DOWN)
+                        self.prevProgramButtonState=newProgramButtonState
+                    else:
+                        if self.enabled_events & (1 << State.STATE_CHANGE_EVENT_PROGRAM_UP):
+                            self.enabled_events = self.state.state_change_event(State.STATE_CHANGE_EVENT_PROGRAM_UP)
+                        self.nextProgramButtonState=newProgramButtonState
+            finally:
+                self.program_button_event_lock.release()
+	
+    def momentaryButtonStateChange(self,channel):
+        if self.momentary_button_event_lock.acquire(False) :
+            try:
+                self.momentaryButtonState = False
+                self.momentary_button_push_time = time.time()
+                cur_enabled_events = self.enabled_events
+                next_burst_event = 0.3
+                if cur_enabled_events & (1 << State.STATE_CHANGE_EVENT_MOMENTARY_PUSH):
+                    self.enabled_events = self.state.state_change_event(State.STATE_CHANGE_EVENT_MOMENTARY_PUSH)
+                while GPIO.input(self.MOMENTARYBUTTON) == 0 :
+                    time.sleep(0.01)
+                    if (((time.time()-self.momentary_button_push_time) > 0.1) and
+                        (cur_enabled_events & (1 << State.STATE_CHANGE_EVENT_MOMENTARY_HOLD_100MS))):
+                        self.enabled_events = self.state.state_change_event(State.STATE_CHANGE_EVENT_MOMENTARY_HOLD_100MS)
+                        cur_enabled_events = cur_enabled_events & ~(1 << State.STATE_CHANGE_EVENT_MOMENTARY_HOLD_100MS)
+                    elif (((time.time()-self.momentary_button_push_time) > 0.5) and
+                          (cur_enabled_events & (1 << State.STATE_CHANGE_EVENT_MOMENTARY_HOLD_500MS))):
+                        self.enabled_events = self.state.state_change_event(State.STATE_CHANGE_EVENT_MOMENTARY_HOLD_500MS)
+                        cur_enabled_events = cur_enabled_events & ~(1 << State.STATE_CHANGE_EVENT_MOMENTARY_HOLD_500MS)
+                    elif (((time.time()-self.momentary_button_push_time) > 2.0) and
+                          (cur_enabled_events & (1 << State.STATE_CHANGE_EVENT_MOMENTARY_HOLD_2S))):
+                        self.enabled_events = self.state.state_change_event(State.STATE_CHANGE_EVENT_MOMENTARY_HOLD_2S)
+                        cur_enabled_events = cur_enabled_events & ~(1 << State.STATE_CHANGE_EVENT_MOMENTARY_HOLD_2S)
+                    elif (((time.time()-self.momentary_button_push_time) > next_burst_event) and
+                          (cur_enabled_events & (1 << State.STATE_CHANGE_EVENT_MOMENTARY_HOLD_BURST))):
+                        self.enabled_events = self.state.state_change_event(State.STATE_CHANGE_EVENT_MOMENTARY_HOLD_BURST)
+                        debug_out("Burst")
+                        if next_burst_event > 5.0:
+                            next_burst_event += 0.05
+                        elif next_burst_event > 2:
+                            next_burst_event += 0.1
+                        else:
+                            next_burst_event += 0.2
+                
+                if cur_enabled_events & (1 << State.STATE_CHANGE_EVENT_MOMENTARY_RELEASE):
+                    debug_out("Release")
+                    self.enabled_events = self.state.state_change_event(State.STATE_CHANGE_EVENT_MOMENTARY_RELEASE)
+            finally:
+                self.momentaryButtonState = True
+                self.momentary_button_event_lock.release()
+	
+
+
+def debug_out(info):
+    if (debug):
+        print >> sys.stderr, info    
+
+
+debug=False
+use_pygame=False
+try:
+    opts, args = getopt.getopt(sys.argv[1:],"dght:")
+except getopt.GetoptError as err:
+    print str(err)
+    print 'gigrig_midi_controller.py [-d] [-h] [-g]'
+    sys.exit(2)
+
+for opt, arg in opts:
+    if opt == '-h':
+        print 'gigrig_midi_controller.py [-d] [-h] [-g]'
+        sys.exit()
+    elif opt == '-d':
+        debug = True
+    elif opt == '-g':
+        use_pygame = True
+ 
+
+
+midi_available_devices = [ {"name": "HOG2", 
+                            "capabilities" : "/etc/gigrig-midi-controller/devices/capabilities/hog2.json", 
+                            "settings": "/etc/gigrig-midi-controller/devices/settings/hog2.json"},
+                           {"name": "Strymon-Timeline", 
+                            "capabilities" : "/etc/gigrig-midi-controller/devices/capabilities/timeline.json", 
+                            "settings": "/etc/gigrig-midi-controller/devices/settings/timeline.json"} ,
+                           {"name": "Strymon-Mobius", 
+                            "capabilities" : "/etc/gigrig-midi-controller/devices/capabilities/mobius.json", 
+                            "settings": "/etc/gigrig-midi-controller/devices/settings/mobius.json"} ]
+midi_devices = {}
+
+for device in midi_available_devices:
+    midi_devices[device["name"]] = MidiDevice(device["capabilities"], device["settings"])
+
+song_data    = SongList("/etc/gigrig-midi-controller/song-data.json", True, "/var/run/gigrig-midi-controller.state", True)
+program_data = GigrigProgramList( "/etc/gigrig-midi-controller/program-info.json", True )
+
+midi_channel = 0
+midi_controller = GigrigG2MidiController(midi_channel)
+
+state        = State(song_data, program_data, midi_devices, midi_controller)
+input_device = InputDevice(state)
+gui          = Gui(Gui.GUI_TYPE_PYGAME if use_pygame else Gui.GUI_TYPE_CURSES,state)
+
+
+# Handle manual program changes initiated by pushing gigrig program buttons
+def manual_program_change(channel, program, state):
+    if (channel == midi_channel):
+        if (state.state == State.STATE_MANUAL) | (state.state == State.STATE_NORMAL):
+            state.state = State.STATE_MANUAL
+            state.cur_manual_program = program
+        elif (state.state == State.STATE_EDIT_SELECT_PROP):
+            # If in select property edit mode we can use the program buttons to select
+            # the program to use
+            state.song_data.set_program(program)
+        state.state_change()
+
+midi_controller.add_midi_event_callback(manual_program_change)
+
+ 
+def exitHousekeeping(signal, frame):
+    input_device.exit()
+    gui.exit()
+    sys.exit(0)
+
+if __name__ == '__main__':
+    signal.signal(signal.SIGINT, exitHousekeeping)
+
+
+while (True):
+    time.sleep(1.0)
+    
+exitHousekeeping(signal.SIGINT, 0)
