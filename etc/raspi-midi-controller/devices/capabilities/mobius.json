@@ -1,4 +1,5 @@
 { "device_name" : "Strymon-Mobius",
+"short_name" : "MOBI",
 "save_preset_cc" : 128,
 "parameters" : 
 [ { "name" : "Program",

@@ -1,5 +1,6 @@
 { "device_name" : "Strymon-Timeline",
-"save_preset_cc" : 128,
+  "short_name" : "TIME",
+  "save_preset_cc" : 128,
 "parameters" : 
 [ { "name" : "Program",
     "type" : 2,

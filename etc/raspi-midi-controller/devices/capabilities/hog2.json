@@ -1,4 +1,5 @@
 { "device_name" : "HOG2",
+  "short_name" : "HOG2",
 "save_preset_cc" : 117,
 "parameters" : 
 [ { "name" : "Program",
