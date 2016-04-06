@@ -1,0 +1,26 @@
+#!/bin/sh -e
+#
+# rc.local
+#
+# This script is executed at the end of each multiuser runlevel.
+# Make sure that the script will "exit 0" on success or any other
+# value on error.
+#
+# In order to enable or disable this script just change the execution
+# bits.
+#
+# By default this script does nothing.
+
+
+chmod 1777 /tmp
+#mount -o remount,ro /
+con2fbmap 1 1
+chmod a+rw /dev/tty1
+# Print the IP address
+_IP=$(hostname -I) || true
+if [ "$_IP" ]; then
+  printf "My IP address is %s\n" "$_IP"
+fi
+HOME=/home/pi TERM=linux  /home/pi/raspi-midi-controller/raspi-midi-controller  2> /var/log/raspi-midi-controller.log&
+
+exit 0
