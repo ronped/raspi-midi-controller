@@ -247,13 +247,16 @@ class GigrigG2MidiController:
         self.engage_state=0
         self.open_midi_port(_midi_serial, _midi_dev)
         # Reset gigrig
-        self.ser.write(chr(0xc3) + chr(0x0))
+        self.reset()
         self.program=0
         self.midi_channel=_midi_channel
         self.waiting_for_midi_response = False
         self.program_queue = [ ]
         self.send_and_push_queue_semaphore = threading.Lock()
         thread.start_new_thread(self.listen_for_midi_input, (0,))
+
+    def reset(self):
+        self.ser.write(chr(0xc3) + chr(0x0))
 
     def open_midi_port(self, _midi_serial, _midi_dev = "/dev/midi"):
         try:
@@ -563,7 +566,9 @@ class State:
      PROP_SAVE,
      PROP_EXIT,
      PROP_SHUTDOWN,
-     NUM_PROPS) = range(11)
+     PROP_RESET_GIGRIG,
+     PROP_IP_ADDR,
+     NUM_PROPS) = range(13)
     
     (OP_TYPE_COPY,
      OP_TYPE_MOVE,
@@ -850,6 +855,14 @@ class State:
                     debug_out("STATE_NORMAL")
                     self.state = self.STATE_NORMAL 
                     os.system("shutdown -h now")
+                elif (self.prop == self.PROP_RESET_GIGRIG):
+                    midi_controller.reset()
+                    debug_out("STATE_NORMAL")
+                    self.state = self.STATE_NORMAL 
+                elif (self.prop == self.PROP_IP_ADDR):
+                    #debug_out("STATE_NORMAL")
+                    #self.state = self.STATE_NORMAL 
+                    pass
                 else : 
                     debug_out("STATE_EDIT_STRING")
                     self.state = self.STATE_EDIT_STRING 
@@ -1165,6 +1178,8 @@ class Gui:
             self.win.addstr(1,0,"--------------")
         elif (self.state.state == State.STATE_EDIT_SELECT_PROP) & (self.state.prop == State.PROP_MIDI_DEVICE) :
             self.win.addstr(1,0,"Midi device params:", curses.A_NORMAL)
+        elif (self.state.state == State.STATE_EDIT_SELECT_PROP) & (self.state.prop == State.PROP_IP_ADDR):
+            self.win.addstr(1,0,"IP Address", curses.A_NORMAL)
         else: 
             self.win.addstr(1,0," \[  ]", curses.A_BOLD)
             if not (((self.state.state == State.STATE_EDIT_SELECT_PROP) or
@@ -1216,6 +1231,13 @@ class Gui:
             self.win.addstr(2,0, "Save?", self.edit_curses_attr)
         elif (self.state.state == State.STATE_EDIT_SELECT_PROP) & (self.state.prop == State.PROP_SHUTDOWN):
             self.win.addstr(2,0, "Shutdown?", self.edit_curses_attr)
+        elif (self.state.state == State.STATE_EDIT_SELECT_PROP) & (self.state.prop == State.PROP_RESET_GIGRIG):
+            self.win.addstr(2,0, "Reset Gigrig?", self.edit_curses_attr)
+        elif (self.state.state == State.STATE_EDIT_SELECT_PROP) & (self.state.prop == State.PROP_IP_ADDR):
+            f = os.popen('ifconfig wlan0 | grep "inet\ addr" | cut -d: -f2 | cut -d" " -f1')
+            your_ip=f.read()
+            self.win.addstr(2,0, "wlan0: " + your_ip.rstrip('\r\n'))
+            f.close()
         elif (self.state.state == State.STATE_EDIT_SELECT_PROP) & (self.state.prop == State.PROP_MIDI_DEVICE):
             self.win.addstr(2,0, "No midi devices" if len(self.state.midi_devices.keys()) == 0 else midi_device.get_device_name()[0:self.display_char_width], self.edit_curses_attr)
         elif ((self.state.state == State.STATE_NORMAL) | (self.state.state == State.STATE_MANUAL) | 
@@ -1302,6 +1324,11 @@ class Gui:
                     blink_value_off = (midi_device.parameter_state_changed(self.state.midi_device_param + 1 + self.state.midi_menu_page*7) and
                                        (self.state.blink_state == State.BLINK_OFF))
                     self.win.addstr(3,(self.display_char_width+1)/2, self.makeMidiMenuParamString(param_name, param_value, blink_value_off))  
+        elif (self.state.state == State.STATE_EDIT_SELECT_PROP) & (self.state.prop == State.PROP_IP_ADDR):
+            f = os.popen('ifconfig eth0 | grep "inet\ addr" | cut -d: -f2 | cut -d" " -f1')
+            your_ip = f.read()
+            self.win.addstr(3,0, "eth0: " + your_ip.rstrip('\r\n'))
+            f.close()
         else:
             cur_midi_device = 0        
             self.win.addstr(3,0,"MIDI:", curses.A_BOLD)
