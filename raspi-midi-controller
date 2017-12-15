@@ -250,6 +250,8 @@ class GigrigG2MidiController:
         self.reset()
         self.program=0
         self.midi_channel=_midi_channel
+        self.midi_serial=_midi_serial
+        self.midi_dev=_midi_dev
         self.waiting_for_midi_response = False
         self.program_queue = [ ]
         self.send_and_push_queue_semaphore = threading.Lock()
@@ -287,29 +289,41 @@ class GigrigG2MidiController:
         channel = device.get_device_channel()
         parameter_state = device.get_parameter_state()
         
-        if (device.has_external_program() and
-            ((not only_specific_cc) or (str(specific_cc) == "128"))):
-            # Program change for external program
-            debug_out ("Midi write: 0x%02x%02x" % ((0xc0+channel), (parameter_state["128"]-129))) 
-            self.ser.write(chr(0xc0+channel) + chr(parameter_state["128"]-129))        
-            time.sleep(0.005)
-        else:
-            for cc in parameter_state:
-                if ((int(cc) != 128) and
-                    ((not only_specific_cc) or (int(specific_cc) == int(cc)))):
-                    # Normal CC parameter
-                    debug_out ("Midi write: 0x%02x%02x%02x" % ((0xb0+channel), (int(cc)), (parameter_state[cc]))) 
-                    self.ser.write(chr(0xb0+channel) + chr(int(cc)) + chr(parameter_state[cc]))
+        try:
+            if (device.has_external_program() and
+                ((not only_specific_cc) or (str(specific_cc) == "128"))):
+                # Program change for external program
+                debug_out ("Midi write: 0x%02x%02x" % ((0xc0+channel), (parameter_state["128"]-129))) 
+                self.ser.write(chr(0xc0+channel) + chr(parameter_state["128"]-129))        
+                time.sleep(0.005)
+            else:
+                for cc in parameter_state:
+                    if ((int(cc) != 128) and
+                        ((not only_specific_cc) or (int(specific_cc) == int(cc)))):
+                        # Normal CC parameter
+                        debug_out ("Midi write: 0x%02x%02x%02x" % ((0xb0+channel), (int(cc)), (parameter_state[cc]))) 
+                        self.ser.write(chr(0xb0+channel) + chr(int(cc)) + chr(parameter_state[cc]))
                     time.sleep(0.005)
-    
+        except IOError:
+            # Something went wrong - try reopening the device
+            self.open_midi_port(midi_serial, midi_dev)
+            return False
+        return True
+                    
     def store_device_program(self, device):
         channel         = device.get_device_channel()
         save_preset_cc  = device.get_save_preset_cc()
         parameter_state = device.get_parameter_state()
         cur_program     = device.get_parameter_value(128, True)
-        if cur_program < 128:
-            debug_out ("Midi write (store_device_program()): 0x%02x%02x%02x" % ((0xb0+channel), (int(save_preset_cc)), cur_program)) 
-            self.ser.write(chr(0xb0+channel) + chr(int(save_preset_cc)) + chr(cur_program))
+        try:
+            if cur_program < 128:
+                debug_out ("Midi write (store_device_program()): 0x%02x%02x%02x" % ((0xb0+channel), (int(save_preset_cc)), cur_program)) 
+                self.ser.write(chr(0xb0+channel) + chr(int(save_preset_cc)) + chr(cur_program))
+        except IOError:
+            # Something went wrong - try reopening the device
+            self.open_midi_port(midi_serial, midi_dev)
+            return False
+        return True
 
     def set_gigrig_program(self, new_program):
         self.send_and_push_queue_semaphore.acquire()
@@ -318,74 +332,85 @@ class GigrigG2MidiController:
             # a midi in connection so just clear queue
             self.program_queue = [ ]
 
-        if ((new_program >= 16) & ~self.engage_state) | ((new_program < 16) & self.engage_state):
-            # Toggle engage
-            debug_out ("Midi write: 0x%02x%02x" % (0xc0+self.midi_channel, 0x10)) 
-            self.ser.write(chr(0xc0+self.midi_channel) + chr(0x10))        
-            self.ser.write(chr(0xfe))
-            self.engage_state ^= 1 
-            time.sleep(0.01)
-        if (self.program&0xf == new_program&0xf) :
-            # Same program (or same program in different bank). Need to toggle twice
-            if new_program&0xf == 0:
-                # We can not toggle program 0 twice so use program 1
-                debug_out ("Midi write: 0x%02x%02x" % (0xc0+self.midi_channel, 0x01))
-                self.ser.write(chr(0xc0+self.midi_channel) + chr(0x1)) 
-                self.program = 1
-                self.program_queue.append((new_program&0xf0)+1)
-            else :
-                self.ser.write(chr(0xc0+self.midi_channel) + chr(new_program&0xf))
-                debug_out ("Midi write: 0x%02x%02x" % (0xc0+self.midi_channel, (new_program&0xf))) 
-                self.program_queue.append(new_program&0xf0)
-            self.ser.write(chr(0xfe))
-
-        # If we are changing to program 0 then toggle the same button as was selected before
-        if new_program&0xf == 0:
-            # Enable bypass by toggling same button as we previously had selected
-            debug_out ("Midi write: 0x%02x%02x" % (0xc0+self.midi_channel, self.program&0xf)) 
-            self.ser.write(chr(0xc0+self.midi_channel) + chr(self.program&0xf))
-        else :
-            debug_out ("Midi write: 0x%02x%02x" % (0xc0+self.midi_channel, new_program&0xf)) 
-            self.ser.write(chr(0xc0+self.midi_channel) + chr(new_program&0xf))
-        self.ser.write(chr(0xfe))
-        self.program_queue.append(new_program)
-        self.program = new_program
-        self.send_and_push_queue_semaphore.release()
+        try:
+            if ((new_program >= 16) & ~self.engage_state) | ((new_program < 16) & self.engage_state):
+                # Toggle engage
+                debug_out ("Midi write: 0x%02x%02x" % (0xc0+self.midi_channel, 0x10)) 
+                self.ser.write(chr(0xc0+self.midi_channel) + chr(0x10))        
+                self.ser.write(chr(0xfe))
+                self.engage_state ^= 1 
+                time.sleep(0.01)
+            if (self.program&0xf == new_program&0xf) :
+                # Same program (or same program in different bank). Need to toggle twice
+                if new_program&0xf == 0:
+                    # We can not toggle program 0 twice so use program 1
+                    debug_out ("Midi write: 0x%02x%02x" % (0xc0+self.midi_channel, 0x01))
+                    self.ser.write(chr(0xc0+self.midi_channel) + chr(0x1)) 
+                    self.program = 1
+                    self.program_queue.append((new_program&0xf0)+1)
+                else :
+                    self.ser.write(chr(0xc0+self.midi_channel) + chr(new_program&0xf))
+                    debug_out ("Midi write: 0x%02x%02x" % (0xc0+self.midi_channel, (new_program&0xf))) 
+                    self.program_queue.append(new_program&0xf0)
+                self.ser.write(chr(0xfe))
             
+            # If we are changing to program 0 then toggle the same button as was selected before
+            if new_program&0xf == 0:
+                # Enable bypass by toggling same button as we previously had selected
+                debug_out ("Midi write: 0x%02x%02x" % (0xc0+self.midi_channel, self.program&0xf)) 
+                self.ser.write(chr(0xc0+self.midi_channel) + chr(self.program&0xf))
+            else :
+                debug_out ("Midi write: 0x%02x%02x" % (0xc0+self.midi_channel, new_program&0xf)) 
+                self.ser.write(chr(0xc0+self.midi_channel) + chr(new_program&0xf))
+            self.ser.write(chr(0xfe))
+            self.program_queue.append(new_program)
+            self.program = new_program
+        except IOError:
+            # Something went wrong - try reopening the device
+            self.open_midi_port(midi_serial, midi_dev)
+            self.send_and_push_queue_semaphore.release()
+            return False
+        self.send_and_push_queue_semaphore.release()
+        return True
+    
     def listen_for_midi_input(self, dummy):
         while True:
-            readbyte = self.ser_in.read(1)
-            debug_out ("Midi byte read: 0x%02x" % ord(readbyte))
-            if (len(readbyte) > 0) and (ord(readbyte)&0xf0 == 0xc0):
-                # Received program change
-                channel = ord(readbyte) & 0xf
-                rcv_program = ord(self.ser_in.read(1))
-                debug_out ("Midi byte read: 0x%02x" % rcv_program)
-                if (len(self.program_queue) > 0) and ((self.program_queue[0]&0xf) == (rcv_program&0xf)):
-                    if self.program_queue[0] == rcv_program:
-                        # Received in the program we have changed, all is ok just pop from queue
-                        self.program_queue.pop(0)
-                    elif (self.program_queue[0]&0xf) == (rcv_program&0xf):
-                        # Looks like the bank engage button is in the wrong mode so toggle it and program again
-                        # make sure that we are not in the middle of two midi program change requests
-                        self.send_and_push_queue_semaphore.acquire()
-                        self.engage_state ^= 1
-                        self.program_queue.pop(0)
-                        self.send_and_push_queue_semaphore.release()
-                        self.set_gigrig_program(self.program)
-                else:
-                    debug_out ("Pr.change: Ch%d Pr%d" % (channel, rcv_program)) 
-                    if (len(self.program_queue) > 0):
-                        # Clear queue if we have it. Something must have gone wrong then
-                        self.program_queue = [ ]
-
-                    # Midi change initiated from gigrig 
-                    for callback in self.midi_event_callback_functions:
-                        callback(channel, rcv_program, self.state)
-                    if (channel == midi_channel):
-                        self.program = rcv_program
-                        if ((rcv_program&0xf0) != 0) != self.engage_state:
+            try:
+                readbyte = self.ser_in.read(1)
+                debug_out ("Midi byte read: 0x%02x" % ord(readbyte))
+                if (len(readbyte) > 0) and (ord(readbyte)&0xf0 == 0xc0):
+                    # Received program change
+                    channel = ord(readbyte) & 0xf
+                    rcv_program = ord(self.ser_in.read(1))
+                    debug_out ("Midi byte read: 0x%02x" % rcv_program)
+                    if (len(self.program_queue) > 0) and ((self.program_queue[0]&0xf) == (rcv_program&0xf)):
+                        if self.program_queue[0] == rcv_program:
+                            # Received in the program we have changed, all is ok just pop from queue
+                            self.program_queue.pop(0)
+                        elif (self.program_queue[0]&0xf) == (rcv_program&0xf):
+                            # Looks like the bank engage button is in the wrong mode so toggle it and program again
+                            # make sure that we are not in the middle of two midi program change requests
+                            self.send_and_push_queue_semaphore.acquire()
                             self.engage_state ^= 1
+                            self.program_queue.pop(0)
+                            self.send_and_push_queue_semaphore.release()
+                            self.set_gigrig_program(self.program)
+                    else:
+                        debug_out ("Pr.change: Ch%d Pr%d" % (channel, rcv_program)) 
+                        if (len(self.program_queue) > 0):
+                            # Clear queue if we have it. Something must have gone wrong then
+                            self.program_queue = [ ]
+    
+                        # Midi change initiated from gigrig 
+                        for callback in self.midi_event_callback_functions:
+                            callback(channel, rcv_program, self.state)
+                        if (channel == midi_channel):
+                            self.program = rcv_program
+                            if ((rcv_program&0xf0) != 0) != self.engage_state:
+                                self.engage_state ^= 1
+            except IOError:
+                # Something went wrong - try reopening the device
+                self.open_midi_port(midi_serial, midi_dev)
 
 
 class GigrigProgramList:
@@ -629,6 +654,7 @@ class State:
         self.prop_current_char_value  = 97
         self.prop_new_name       = list(" ")
         self.prop_string_char_map = string.ascii_letters + string.digits + "./!_+- <>"
+        self.midi_io_fault       = 0
         self.midi_device         = 0
         self.midi_device_param   = 0
         self.midi_program_state  = self.MIDI_PROGRAM_STATE_SELECT
@@ -645,12 +671,12 @@ class State:
         self.edit_string_return_state = self.STATE_NORMAL
         time.sleep(2)
         self.midi_controller.state = self
-        self.midi_controller.set_gigrig_program(self.song_data.get_program())
+        self.midi_io_fault = not self.midi_controller.set_gigrig_program(self.song_data.get_program())
         for (device_name, device) in self.midi_devices.items():
             midi_params = self.song_data.get_midi_params(device_name)
             device.set_parameter_state(midi_params)
             if (len(midi_params) > 0) and self.song_data.is_midi_device_enabled(device_name) :
-                self.midi_controller.set_device_parameters(device)
+                self.midi_io_fault = not self.midi_controller.set_device_parameters(device)
         self.state  = self.STATE_NORMAL
         self.blink_state = State.BLINK_ON
 
@@ -670,7 +696,7 @@ class State:
         
         if (self.state == self.STATE_MANUAL) :
  	    # Go back to current song and part and into normal mode
-	    self.midi_controller.set_gigrig_program(self.song_data.get_program())
+	    self.midi_io_fault = not self.midi_controller.set_gigrig_program(self.song_data.get_program())
 	    self.state = self.STATE_NORMAL
 	elif (self.state == self.STATE_NORMAL) :
             if event_type == self.STATE_CHANGE_EVENT_MIDI_MENU:
@@ -687,14 +713,14 @@ class State:
 	        self.song_data.decr_song_part()
 
             if program_change_event:
-                self.midi_controller.set_gigrig_program(self.song_data.get_program())
+                self.midi_io_fault = not self.midi_controller.set_gigrig_program(self.song_data.get_program())
                 for (device_name, device) in self.midi_devices.items():
                     midi_params = self.song_data.get_midi_params(device_name)
                     device.set_parameter_state(midi_params)
                     debug_out( "Checking device : %s" % (device.get_device_name()))
                     if (len(midi_params) > 0) and self.song_data.is_midi_device_enabled(device_name) :
                         debug_out( "Loading parameters for device : %s" % (device.get_device_name()))
-                        self.midi_controller.set_device_parameters(device)
+                        self.midi_io_fault = not self.midi_controller.set_device_parameters(device)
                 self.song_data.dump_state()
 	elif (self.state == self.STATE_MIDI_MENU) :
 	    device = self.midi_devices[midi_devices.keys()[self.midi_device]]
@@ -721,23 +747,23 @@ class State:
                   (data0 < 7) and            
                   (data0 < (device.get_num_parameters()-self.midi_menu_page*7))):
                 device.set_parameter_value(self.midi_menu_page*7+data0, False, int(data1 * float(device.get_parameter_max_value(self.midi_menu_page*7+data0, False))))
-                self.midi_controller.set_device_parameters(device, True, device.get_parameter_cc(self.midi_menu_page*7+data0))
+                self.midi_io_fault = not self.midi_controller.set_device_parameters(device, True, device.get_parameter_cc(self.midi_menu_page*7+data0))
             elif event_type == self.STATE_CHANGE_EVENT_SELECT:
                 if self.midi_menu_state == self.MIDI_MENU_STATE_NORMAL:
                     self.midi_menu_state = self.MIDI_MENU_STATE_ACTION
                 else:
                     if self.midi_menu_op_type == self.MIDI_MENU_OP_TYPE_SAVE:
                         device.store_parameter_program()
-                        self.midi_controller.store_device_program(device)
+                        self.midi_io_fault = not self.midi_controller.store_device_program(device)
                         self.midi_menu_state = self.MIDI_MENU_STATE_NORMAL
                     elif self.midi_menu_op_type == self.MIDI_MENU_OP_TYPE_LOAD:
                         device.load_parameter_program()
-                        self.midi_controller.set_device_parameters(device)
+                        self.midi_io_fault = not self.midi_controller.set_device_parameters(device)
                         self.midi_menu_state = self.MIDI_MENU_STATE_NORMAL
                     elif self.midi_menu_op_type == self.MIDI_MENU_OP_TYPE_REVERT:
                         midi_params = self.song_data.get_midi_params(device.get_device_name())
                         device.set_parameter_state(midi_params)
-                        self.midi_controller.set_device_parameters(device)
+                        self.midi_io_fault = not self.midi_controller.set_device_parameters(device)
                         self.midi_menu_state = self.MIDI_MENU_STATE_NORMAL
                     elif self.midi_menu_op_type == self.MIDI_MENU_OP_TYPE_RENAME:
                         self.state = self.STATE_EDIT_STRING
@@ -771,7 +797,7 @@ class State:
                             device.inc_parameter_value(self.midi_device_param, False)
                         elif event_type == self.STATE_CHANGE_EVENT_MOMENTARY_PUSH_LEFT:
                             device.dec_parameter_value(self.midi_device_param, False)
-                        self.midi_controller.set_device_parameters(device, True, device.get_parameter_cc(self.midi_menu_page*7+data0))
+                        self.midi_io_fault = not self.midi_controller.set_device_parameters(device, True, device.get_parameter_cc(self.midi_menu_page*7+data0))
                 else:
                     if self.midi_device_param == device.get_num_parameters():
                         self.song_data.set_midi_params(device.get_device_name(), device.get_parameter_state())
@@ -788,11 +814,11 @@ class State:
                     else: 
                         if self.midi_program_state == self.MIDI_PROGRAM_STATE_CHANGE_ACTION_SAVE:
                             device.store_parameter_program()
-                            self.midi_controller.store_device_program(device)
+                            self.midi_io_fault = not self.midi_controller.store_device_program(device)
                             self.midi_program_state = self.MIDI_PROGRAM_STATE_SELECT
                         elif self.midi_program_state == self.MIDI_PROGRAM_STATE_CHANGE_ACTION_LOAD:
                             device.load_parameter_program()
-                            self.midi_controller.set_device_parameters(device)
+                            self.midi_io_fault = not self.midi_controller.set_device_parameters(device)
                             self.midi_program_state = self.MIDI_PROGRAM_STATE_SELECT
                         elif self.midi_program_state == self.MIDI_PROGRAM_STATE_CHANGE_ACTION_NAME:
                             self.state = self.STATE_EDIT_STRING 
@@ -824,10 +850,10 @@ class State:
                     self.midi_device = (self.midi_device - 1) if self.midi_device > 0 else len(self.midi_devices) - 1  
             elif event_type == self.STATE_CHANGE_EVENT_MOMENTARY_RELEASE_RIGHT:
                 if (self.prop == self.PROP_PROGRAM):
-                    self.midi_controller.set_gigrig_program(self.song_data.get_program())                                    
+                    self.midi_io_fault = not self.midi_controller.set_gigrig_program(self.song_data.get_program())                                    
             elif event_type == self.STATE_CHANGE_EVENT_MOMENTARY_RELEASE_LEFT:
                 if (self.prop == self.PROP_PROGRAM):
-                    self.midi_controller.set_gigrig_program(self.song_data.get_program())
+                    self.midi_io_fault = not self.midi_controller.set_gigrig_program(self.song_data.get_program())
             elif event_type == self.STATE_CHANGE_EVENT_ENTER_EDIT_MODE:
                 debug_out("STATE_NORMAL")
                 self.state = self.STATE_NORMAL 
@@ -1329,14 +1355,17 @@ class Gui:
             your_ip = f.read()
             self.win.addstr(3,0, "eth0: " + your_ip.rstrip('\r\n'))
             f.close()
-        else:
+        else:                
             cur_midi_device = 0        
             self.win.addstr(3,0,"MIDI:", curses.A_BOLD)
-            for (device_name, device) in self.state.midi_devices.items():
-                midi_params = self.state.song_data.get_midi_params(device_name)
-                if (len(midi_params) > 0) and self.state.song_data.is_midi_device_enabled(device_name) :
-                    self.win.addstr(3, 6 + cur_midi_device*5, device.get_device_short_name(), curses.A_NORMAL)
-                    cur_midi_device = cur_midi_device + 1
+            if (state.midi_io_fault):
+                self.win.addstr(3, 6, "IO Error", curses.A_NORMAL)
+            else:
+                for (device_name, device) in self.state.midi_devices.items():
+                    midi_params = self.state.song_data.get_midi_params(device_name)
+                    if (len(midi_params) > 0) and self.state.song_data.is_midi_device_enabled(device_name) :
+                        self.win.addstr(3, 6 + cur_midi_device*5, device.get_device_short_name(), curses.A_NORMAL)
+                        cur_midi_device = cur_midi_device + 1
             
         self.win.refresh()
 
@@ -1522,21 +1551,24 @@ class InputDeviceCosmohat:
         
     def cosmohat_listener(self, dummy):
         while True:
-            switches_state = self.cosmohat.switches()
-            knobs_state = self.cosmohat.knobs()
-            
-            if switches_state != self.prev_switches_state: 
-                for i, new_switch_state in enumerate(switches_state):
-                    if self.prev_switches_state[i] != new_switch_state:
-                        self.prev_switches_state[i] = new_switch_state
-                        self.switch_state_change(i, new_switch_state)
-
-            for i, knob in enumerate(knobs_state):
-                if abs(self.prev_knobs_state[i] - knob) > self.knob_state_change_thres:
-                    self.knob_state_change(i, knob)
-
-            self.prev_switches_state = switches_state
-            self.prev_knobs_state = knobs_state
+            try:
+                switches_state = self.cosmohat.switches()
+                knobs_state = self.cosmohat.knobs()
+                
+                if switches_state != self.prev_switches_state: 
+                    for i, new_switch_state in enumerate(switches_state):
+                        if self.prev_switches_state[i] != new_switch_state:
+                            self.prev_switches_state[i] = new_switch_state
+                            self.switch_state_change(i, new_switch_state)
+    
+                for i, knob in enumerate(knobs_state):
+                    if abs(self.prev_knobs_state[i] - knob) > self.knob_state_change_thres:
+                        self.knob_state_change(i, knob)
+    
+                self.prev_switches_state = switches_state
+                self.prev_knobs_state = knobs_state
+            except:
+                pass
             time.sleep(0.01)
 
 
