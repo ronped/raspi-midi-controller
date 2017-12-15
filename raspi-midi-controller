@@ -1,8 +1,6 @@
 #!/usr/bin/env python
-import RPi.GPIO as GPIO, time, signal, sys, getopt, curses, json, thread, threading, copy, string, os, pygame, operator
+import time, signal, sys, getopt, curses, json, thread, threading, copy, string, os,  operator
 import pdb
-sys.path.insert(0, '/home/pi/cosmohat-fw/cosmoavr')
-from cosmohat import CosmoHat
 
 class MidiDevice:
     MIDI_CAP_TYPE_VALUE, MIDI_CAP_TYPE_ENUM, MIDI_CAP_TYPE_PROGRAM = range(3)
@@ -234,7 +232,7 @@ class MidiDevice:
     def load_settings_data(self):
         with open(self.settings_file, 'r') as infile:
             self.settings_data = json.load(infile)
-
+            
     def save_settings_data(self):
         with open(self.settings_file, 'w') as outfile:
             json.dump(self.settings_data, outfile, indent=1)
@@ -271,7 +269,7 @@ class GigrigG2MidiController:
 
         try:
             if _midi_serial:
-                __import__ (serial)
+                __import__ ('serial')
                 self.ser=serial.Serial('/dev/ttyAMA0',38400)		# Set up the UART  
                 self.ser_in = self.ser
             else :
@@ -1103,6 +1101,7 @@ class Gui:
             curses.endwin()
     
     def init_pygame_window(self):
+        pygame = __import__ ('pygame')
         self.driver = "fbcon"
         self.fbdev = "/dev/fb1"
         # Make sure that SDL_VIDEODRIVER is set
@@ -1395,6 +1394,8 @@ class InputDevice:
 
         
         # Setup GPIO pins
+        GPIO = __import__ ('RPi.GPIO')
+
         GPIO.setmode(GPIO.BOARD)
         GPIO.setup(self.LED, GPIO.OUT)
         GPIO.setup(self.PREV_PROGRAM_BUTTON, GPIO.IN, pull_up_down=GPIO.PUD_UP)
@@ -1526,7 +1527,9 @@ class InputDeviceCosmohat:
         self.cosmohat.set_led(led, state)
 
     def __init__(self, state):
-        self.cosmohat = CosmoHat()
+        sys.path.insert(0, '/home/pi/cosmohat-fw/cosmoavr')
+        cosmohat = __import__ ('cosmohat')
+        self.cosmohat = cosmohat.CosmoHat()
         self.prev_switches_state = self.cosmohat.switches()
         self.prev_knobs_state = self.cosmohat.knobs()
 
