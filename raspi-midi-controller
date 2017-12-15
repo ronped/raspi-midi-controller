@@ -12,20 +12,26 @@ class MidiDevice:
         self.capability_data = {}
         self.settings_file = _settings_file
         self.capability_file = _capability_file
-        self.load_settings_data()
         self.load_capability_data()
+        self.load_settings_data()
         self.init_parameter_state()
+
+    def update_loaded_program_state(self, update_name = True):
+        self.loaded_program_state["params"] = copy.deepcopy(self.parameter_state)
+        if update_name:
+            self.loaded_program_state["name"] = self.get_program_name()
 
     def init_parameter_state(self):
         for parameter in self.capability_data["parameters"]:        
             self.parameter_state[str(parameter["cc"])] = parameter["default"] if ("default" in parameter.keys()) else 0
-        self.loaded_program_state = {"params" : copy.deepcopy(self.parameter_state), "name" : self.get_program_name()}
+        self.update_loaded_program_state()
             
     def set_parameter_state(self, param_state, do_not_load_program=False):
-        debug_out(json.dumps(param_state))
+        debug_out("set_parameter_state: " + json.dumps(param_state))
+        param_state_ugly = self.uglify_parameter_state(param_state);
         for cc in self.get_parameter_state():        
-            self.get_parameter_state()[cc] = param_state[cc] if cc in param_state else 128
-        self.loaded_program_state = {"params" : copy.deepcopy(self.parameter_state), "name" : self.get_program_name()}
+            self.get_parameter_state()[cc] = param_state_ugly[cc] if cc in param_state_ugly else 128
+        self.update_loaded_program_state()
         if self.has_internal_program() and not do_not_load_program:
             self.load_parameter_program()
         
@@ -41,8 +47,8 @@ class MidiDevice:
             program = self.get_parameter_state()["128"]
             if (not str(program) in self.settings_data["programs"].keys()):
                 self.settings_data["programs"][str(program)] = {}
+            self.update_loaded_program_state(False)
             self.settings_data["programs"][str(program)]["params"] = copy.deepcopy(self.parameter_state) 
-            self.loaded_program_state = copy.deepcopy(self.settings_data["programs"][str(program)])
             self.save_settings_data()
 
     def get_program_name(self):
@@ -77,7 +83,7 @@ class MidiDevice:
             "programs" in self.settings_data.keys() and
             str(program) in self.settings_data["programs"].keys()):
             self.set_parameter_state(self.settings_data["programs"][str(program)]["params"], True)
-            self.loaded_program_state = copy.deepcopy(self.settings_data["programs"][str(program)])
+            self.update_loaded_program_state(False)
             return True
         return False
             
@@ -98,8 +104,11 @@ class MidiDevice:
                 changed_parameter_state[cc] = self.get_parameter_value(cc, True)
         return changed_parameter_state
                                 
-    def get_parameter_state(self):
-        return self.parameter_state
+    def get_parameter_state(self, prettified = False):
+        if (prettified):
+            return self.prettify_parameter_state()
+        else:
+            return self.parameter_state
 
     def get_device_channel(self):
         return self.settings_data["channel"]
@@ -167,27 +176,42 @@ class MidiDevice:
         else:
             self.parameter_state[str(param_cc)] = value
         
-    def get_parameter_value(self, param, param_is_cc):
+    def get_parameter_value(self, param, param_is_cc, param_state = None):
+        if param_state is None:
+            param_state = self.parameter_state
+        param_cc = param if param_is_cc else self.get_parameter_cc(param)
+        param_num = param if not param_is_cc else self.get_parameter_num(param)
+        value = param_state[str(param_cc)] if str(param_cc) in param_state.keys() else 128
+        if ((self.get_parameter_type(param_num) == self.MIDI_CAP_TYPE_ENUM) and 
+            isinstance(value, str) and
+            value in self.get_parameter_enum(param_num).keys()):
+            # Value is an enum so convert to integer value
+            value = self.get_parameter_enum(param_num)[value];
+        return value;
+
+    def get_parameter_raw_value(self, param, param_is_cc):
         param_cc = param if param_is_cc else self.get_parameter_cc(param)
         return self.parameter_state[str(param_cc)] if str(param_cc) in self.parameter_state.keys() else 128
 
     def get_parameter_num(self, cc_code):
-        for parameter in self.capability_data["parameters"]:
-            if (parameter["cc"] == cc_code):
-                return self.capability_data["parameters"].index(parameter)
-        return -1 
+        search_result = [self.capability_data["parameters"].index(parameter) for parameter in self.capability_data["parameters"] if str(parameter["cc"]) == str(cc_code)]
+        if (len(search_result) != 1):
+            return -1
+        else:
+            return search_result[0];
  
-    def get_parameter_string_value(self, param, param_is_cc):
+    def get_parameter_string_value(self, param, param_is_cc, param_state = None):
+        if param_state is None:
+            param_state = self.parameter_state
         param_cc = param if param_is_cc else self.get_parameter_cc(param)
-        param_value = self.get_parameter_value(param_cc, True)
+        param_value = self.get_parameter_value(param_cc, True, param_state)
         param_num = param if not param_is_cc else self.get_parameter_num(param)
         if param_cc == 128:
             return self.get_program_name() if param_value != 128 else "Skip"
         elif self.get_parameter_type(param_num) == self.MIDI_CAP_TYPE_ENUM:
-            for (name, value) in self.get_parameter_enum(param_num).items():
-                if value == param_value:
-                    return name
-            return "Skip"
+            search_result = [name for (name, value) in self.get_parameter_enum(param_num).items() if value == param_value]
+            string_value = search_result[0] if (len(search_result) == 1) else "Unknown Enum Value"
+            return string_value
         else:
             return str(param_value) if param_value != 128 else "Skip"
 
@@ -196,6 +220,13 @@ class MidiDevice:
         
     def get_parameter_info(self, param_num):
         return self.capability_data["parameters"][param_num]
+
+    def get_parameter_cc_from_name(self, param_name):
+        search_result = [item["cc"] for item in self.capability_data["parameters"] if item["name"] == param_name]
+        if (len(search_result) != 1):
+            return -1
+        else:
+            return search_result[0];
 
     def get_parameter_cc(self, param_num):
         return self.capability_data["parameters"][param_num]["cc"]
@@ -220,7 +251,7 @@ class MidiDevice:
 
     def get_save_preset_cc(self):
         return self.capability_data["save_preset_cc"]
-
+ 
     def load_capability_data(self):
         with open(self.capability_file, 'r') as infile:
             self.capability_data = json.load(infile)
@@ -229,13 +260,60 @@ class MidiDevice:
             if parameter["type"] == self.MIDI_CAP_TYPE_ENUM:
                 parameter["enum"]["Skip"] = 128
 
+    def prettify_parameter_state(self, param_state = None):
+        param_state_pretty = {}
+        if param_state is None:
+            param_state = self.parameter_state
+        for param in param_state:
+            param_name = param;
+            param_cc   = param;
+            param_num = self.get_parameter_num(param)
+            param_value = param_state[param]
+            unknown_name = False;
+            # Check if parameter is already using the name
+            if (param_num < 0):
+                # Check that this is actually a parameter name
+                param_cc = self.get_parameter_cc_from_name(param_name)
+                unknown_name = (param_cc < 0)
+            else:
+                param_name = self.get_parameter_name(param_num)
+            
+            if (not unknown_name):
+                # Check if this is an enum and prettify the value as well
+                if self.get_parameter_type(param_num) == self.MIDI_CAP_TYPE_ENUM:
+                    param_value = self.get_parameter_string_value(str(param_cc), True, param_state)
+                param_state_pretty[param_name] = param_value
+        debug_out("prettify_parameter_state: " + json.dumps(param_state_pretty));
+        return param_state_pretty;
+
+    def uglify_parameter_state(self, param_state = None):
+        param_state_ugly = {}
+        if param_state is None:
+            param_state = self.parameter_state        
+        for param in param_state:
+            param_cc = self.get_parameter_cc_from_name(param)
+            if (param_cc < 0): 
+                if (self.get_parameter_num(param) >= 0):
+                    # This already is a cc number
+                    param_cc = param
+            if (param_cc >= 0):
+                param_value = self.get_parameter_value(param_cc, True, param_state)
+                param_state_ugly[str(param_cc)] = param_value
+            else:
+                print >> sys.stderr, "Warning [", self.get_device_name(), "]: Could not find cc capability for param: ", param, "\n"
+        return param_state_ugly
+
     def load_settings_data(self):
         with open(self.settings_file, 'r') as infile:
             self.settings_data = json.load(infile)
-            
+        for program in self.settings_data["programs"]:
+            self.settings_data["programs"][program]["params"] = self.uglify_parameter_state(self.settings_data["programs"][program]["params"])
+
     def save_settings_data(self):
+        for program in self.settings_data["programs"]:
+            self.settings_data["programs"][program]["params"] = self.prettify_parameter_state(self.settings_data["programs"][program]["params"])
         with open(self.settings_file, 'w') as outfile:
-            json.dump(self.settings_data, outfile, indent=1)
+            json.dump(settings_data, outfile, indent=1)
 
 
 
@@ -375,8 +453,8 @@ class GigrigG2MidiController:
         while True:
             try:
                 readbyte = self.ser_in.read(1)
-                debug_out ("Midi byte read: 0x%02x" % ord(readbyte))
                 if (len(readbyte) > 0) and (ord(readbyte)&0xf0 == 0xc0):
+                    debug_out ("Midi byte read: 0x%02x" % ord(readbyte))
                     # Received program change
                     channel = ord(readbyte) & 0xf
                     rcv_program = ord(self.ser_in.read(1))
@@ -432,18 +510,26 @@ class GigrigProgramList:
         self.data[program_nr] = new_info
 
 class SongList:
-    def __init__(self, data_filename, load_data, state_filename, load_state):
+    def __init__(self, data_filename, load_data, state_filename, load_state, midi_devices):
         # Structures for holding information about songs and programs
         self.current_song      = 0
         self.current_song_part = 0        
         self.data_filename     = data_filename 
         self.state_filename    = state_filename 
+        self.midi_devices      = midi_devices;
         if load_data:
             self.load_data();
         if load_state:
             self.load_state();
 
     def dump_state(self):
+        if not os.path.exists(os.path.dirname(self.state_filename)):
+            try:
+                os.makedirs(os.path.dirname(self.state_filename))
+            except OSError as exc: # Guard against race condition
+                if exc.errno != errno.EEXIST:
+                    raise
+
         with open(self.state_filename, 'w+') as outfile:
             json.dump((self.current_song, self.current_song_part), outfile, indent=1)
             
@@ -452,17 +538,36 @@ class SongList:
             with open(self.state_filename, 'r') as infile:
                 (self.current_song, self.current_song_part) = json.load(infile)
         except:
+            print "Could not load state from ", self.state_filename, "\n"
             self.current_song      = 0
             self.current_song_part = 0        
 
     def save_data(self):
+        if not os.path.exists(os.path.dirname(self.data_filename)):
+            try:
+                os.makedirs(os.path.dirname(self.data_filename))
+            except OSError as exc: # Guard against race condition
+                if exc.errno != errno.EEXIST:
+                    raise
+
+        # Prettify any midi parameters
+        for song in self.data: 
+            for part in song["parts"]: 
+                for part_data in part:
+                    if (part_data[-7:] == "-params" and part_data[:-7] in self.midi_devices): 
+                        part[part_data] = self.midi_devices[part_data[:-7]].prettify_parameter_state(part[part_data])
+
         with open(self.data_filename, 'w') as outfile:
             json.dump(self.data, outfile, indent=1)
-    
+            
     def load_data(self):
         with open(self.data_filename, 'r') as infile:
-            self.data = json.load(infile)
-    
+            try:
+                self.data = json.load(infile)
+            except:
+                print "Could not load Songlist data from ", self.data_filename, "\n"
+                self.data = {}
+
     def get_song_index(self):
         return self.current_song
 
@@ -632,11 +737,10 @@ class State:
      STATE_CHANGE_EVENT_MOMENTARY_PUSH_LEFT,
      STATE_CHANGE_EVENT_MOMENTARY_RELEASE_RIGHT,
      STATE_CHANGE_EVENT_MOMENTARY_RELEASE_LEFT,
-     STATE_CHANGE_EVENT_MOMENTARY_RELEASE_LEFT,
      STATE_CHANGE_EVENT_MOMENTARY_HOLD_BURST,
      STATE_CHANGE_EVENT_MIDI_MENU,
      STATE_CHANGE_EVENT_KNOB
-    ) = range(14)
+    ) = range(13)
 
     (BLINK_ON,
      BLINK_OFF) = range(2)
@@ -798,7 +902,7 @@ class State:
                         self.midi_io_fault = not self.midi_controller.set_device_parameters(device, True, device.get_parameter_cc(self.midi_menu_page*7+data0))
                 else:
                     if self.midi_device_param == device.get_num_parameters():
-                        self.song_data.set_midi_params(device.get_device_name(), device.get_parameter_state())
+                        self.song_data.set_midi_params(device.get_device_name(), device.get_parameter_state(True))
                     debug_out("STATE_EDIT_SELECT_PROP")
                     self.state = self.STATE_NORMAL 
             else:
@@ -1156,6 +1260,7 @@ class Gui:
     def updateDisplayCurses(self):
         self.win.erase()
         midi_device = self.state.midi_devices[self.state.midi_devices.keys()[self.state.midi_device]]
+        #debug_out(json.dumps(midi_device.get_parameter_state()));
 
         if (self.state.state == State.STATE_MIDI_MENU):
             if ((self.state.midi_menu_page*7 + 6) < midi_device.get_num_parameters()):
@@ -1369,7 +1474,7 @@ class Gui:
         self.win.refresh()
 
 
-class InputDevice:
+class InputDeviceGPIO:
     LED=16
     PREV_PROGRAM_BUTTON=11
     NEXT_PROGRAM_BUTTON=7
@@ -1379,17 +1484,17 @@ class InputDevice:
 
     @staticmethod
     def program_button_callback(channel):
-        for instance in InputDevice.instances:
+        for instance in InputDeviceGPIO.instances:
             instance.programButtonStateChange(channel)
 
     @staticmethod
     def momentary_button_callback(channel):
-        for instance in InputDevice.instances:
+        for instance in InputDeviceGPIO.instances:
             instance.momentaryButtonStateChange(channel)
     
     def __init__(self, state):
-        if len(InputDevice.instances) > 1:
-            print >> sys.stderr, "Error: Trying to instantiate multiple instances of InputDevice"
+        if len(InputDeviceGPIO.instances) > 1:
+            print >> sys.stderr, "Error: Trying to instantiate multiple instances of InputDeviceGPIO"
             return
 
         
@@ -1409,9 +1514,9 @@ class InputDevice:
         self.nextProgramButtonState  = GPIO.input(self.NEXT_PROGRAM_BUTTON)
         self.momentaryButtonState    = GPIO.input(self.MOMENTARYBUTTON)
 
-        GPIO.add_event_detect(self.PREV_PROGRAM_BUTTON, GPIO.BOTH, callback=InputDevice.program_button_callback, bouncetime=0)
-        GPIO.add_event_detect(self.NEXT_PROGRAM_BUTTON, GPIO.BOTH, callback=InputDevice.program_button_callback, bouncetime=0)
-        GPIO.add_event_detect(self.MOMENTARYBUTTON, GPIO.FALLING, callback=InputDevice.momentary_button_callback, bouncetime=100)
+        GPIO.add_event_detect(self.PREV_PROGRAM_BUTTON, GPIO.BOTH, callback=InputDeviceGPIO.program_button_callback, bouncetime=0)
+        GPIO.add_event_detect(self.NEXT_PROGRAM_BUTTON, GPIO.BOTH, callback=InputDeviceGPIO.program_button_callback, bouncetime=0)
+        GPIO.add_event_detect(self.MOMENTARYBUTTON, GPIO.FALLING, callback=InputDeviceGPIO.momentary_button_callback, bouncetime=100)
 
         self.program_button_event_lock = threading.Lock()
 	self.momentary_button_event_lock = threading.Lock()
@@ -1424,7 +1529,7 @@ class InputDevice:
         self.state = state
         self.state.blink_state = State.BLINK_ON
         thread.start_new_thread(self.blink_handler, (0,))
-        InputDevice.instances.append(self)
+        InputDeviceGPIO.instances.append(self)
 
     def exit(self):
         GPIO.output(self.LED, False)
@@ -1504,6 +1609,97 @@ class InputDevice:
                 self.momentaryButtonState = True
                 self.momentary_button_event_lock.release()
 	
+
+        
+#from pynput.keyboard import Key, Listener
+
+class InputDeviceKeyPress:
+    instances = []
+
+    def exit(self):
+        self.listener.stop()
+
+    @staticmethod
+    def on_press(key):
+        self = InputDeviceKeyPress.instances[0];
+        debug_out("on_press\n")
+        if (isinstance(key, self.pynput.keyboard.KeyCode) and
+            key.char in self.char_to_event_mapping):
+            if (self.enabled_events & (1 << self.char_to_event_mapping[key.char])):
+                self.enabled_events = self.state.state_change_event(self.char_to_event_mapping[key.char])
+        elif (isinstance(key, self.pynput.keyboard.Key) and
+              key in self.key_on_to_event_mapping):
+            if (self.enabled_events & (1 << self.key_on_to_event_mapping[key])):
+                self.enabled_events = self.state.state_change_event(self.key_on_to_event_mapping[key])
+        elif (isinstance(key, self.pynput.keyboard.KeyCode) and key.char == 'q'):
+            print "Quiting..."
+            os._exit(0)
+            raise pynput.keyboard.Listener.StopException
+        return True
+
+    @staticmethod
+    def on_release(key):
+        self = InputDeviceKeyPress.instances[0];
+        debug_out("on_release\n")
+        if (isinstance(key, self.pynput.keyboard.Key) and key in self.key_off_to_event_mapping):
+            if (self.enabled_events & (1 << self.key_off_to_event_mapping[key])):
+                self.enabled_events = self.state.state_change_event(self.key_off_to_event_mapping[key])
+        return True
+
+    def blink_handler(self,dummy):
+        while True:					# set up a loop...
+            if (self.state.state != State.STATE_NORMAL) & (self.state.state != State.STATE_MANUAL):
+                self.state.blink_state  = State.BLINK_OFF if self.state.blink_state == State.BLINK_ON else State.BLINK_ON
+                self.state.state_change()
+            else:
+                #Led off if corresponding butting pressed
+                self.state.blink_state = State.BLINK_ON
+                self.state.state_change()
+
+            time.sleep(0.25)
+
+    def __init__(self, state):
+        if len(InputDeviceKeyPress.instances) > 1:
+            print >> sys.stderr, "Error: Trying to instantiate multiple instances of InputDeviceKeyPress"
+            return
+        InputDeviceKeyPress.instances.append(self)
+
+        self.switch_state = {}
+        self.enabled_events = ((1 << State.STATE_CHANGE_EVENT_PROGRAM_UP) |
+                                (1 << State.STATE_CHANGE_EVENT_PROGRAM_DOWN) |
+                                (1 << State.STATE_CHANGE_EVENT_MIDI_MENU) |
+                                (1 << State.STATE_CHANGE_EVENT_ENTER_EDIT_MODE))
+        self.prev_switch_state = self.switch_state;
+        self.state = state
+ 
+        thread.start_new_thread(self.blink_handler, (0,))
+        self.pynput = __import__ ('pynput')
+
+        self.char_to_event_mapping = {
+            'e' : State.STATE_CHANGE_EVENT_ENTER_EDIT_MODE,
+            'm': State.STATE_CHANGE_EVENT_MIDI_MENU }
+
+        self.key_on_to_event_mapping = {
+            self.pynput.keyboard.Key.up: State.STATE_CHANGE_EVENT_PROGRAM_UP, 
+            self.pynput.keyboard.Key.down: State.STATE_CHANGE_EVENT_PROGRAM_DOWN,
+            self.pynput.keyboard.KeyCode.from_char('e') : State.STATE_CHANGE_EVENT_ENTER_EDIT_MODE,
+            self.pynput.keyboard.Key.space: State.STATE_CHANGE_EVENT_SELECT,
+            self.pynput.keyboard.Key.right: State.STATE_CHANGE_EVENT_MOMENTARY_PUSH_RIGHT,
+            self.pynput.keyboard.Key.left: State.STATE_CHANGE_EVENT_MOMENTARY_PUSH_LEFT,
+            self.pynput.keyboard.KeyCode.from_char('m'): State.STATE_CHANGE_EVENT_MIDI_MENU }
+
+        self.key_off_to_event_mapping = {
+            self.pynput.keyboard.Key.right: State.STATE_CHANGE_EVENT_MOMENTARY_RELEASE_RIGHT,
+            self.pynput.keyboard.Key.left : State.STATE_CHANGE_EVENT_MOMENTARY_RELEASE_LEFT }
+
+        # Collect events until released
+        with self.pynput.keyboard.Listener(
+            on_press=InputDeviceKeyPress.on_press,
+            on_release=InputDeviceKeyPress.on_release) as self.listener:
+            self.listener.join()
+        
+                
+
 class InputDeviceCosmohat:
     LEFT_FOOTSWITCH_BUTTON=2
     MIDDLE_FOOTSWITCH_BUTTON=1
@@ -1528,29 +1724,34 @@ class InputDeviceCosmohat:
 
     def __init__(self, state):
         sys.path.insert(0, '/home/pi/cosmohat-fw/cosmoavr')
-        cosmohat = __import__ ('cosmohat')
-        self.cosmohat = cosmohat.CosmoHat()
-        self.prev_switches_state = self.cosmohat.switches()
-        self.prev_knobs_state = self.cosmohat.knobs()
-
-            
-        # Turn on LEDs
-        self.set_led(self.LEFT_LED, self.LED_ON)
-        self.set_led(self.RIGHT_LED, self.LED_ON)
-
-        self.enabled_events = ((1 << State.STATE_CHANGE_EVENT_PROGRAM_UP) |
-                               (1 << State.STATE_CHANGE_EVENT_PROGRAM_DOWN) |
-                               (1 << State.STATE_CHANGE_EVENT_MIDI_MENU) |
-                               (1 << State.STATE_CHANGE_EVENT_ENTER_EDIT_MODE))
-
-        self.state = state
-        self.state.blink_state = State.BLINK_ON
-        self.knob_state_change_thres = 1.0/1000.0
-        thread.start_new_thread(self.blink_handler, (0,))
-        thread.start_new_thread(self.cosmohat_listener, (0,))
+        try:
+            cosmohat = __import__ ('cosmohat')
+            self.cosmohat = cosmohat.CosmoHat()
+            self.prev_switches_state = self.cosmohat.switches()
+            self.prev_knobs_state = self.cosmohat.knobs()
+    
+                
+            # Turn on LEDs
+            self.set_led(self.LEFT_LED, self.LED_ON)
+            self.set_led(self.RIGHT_LED, self.LED_ON)
+    
+            self.enabled_events = ((1 << State.STATE_CHANGE_EVENT_PROGRAM_UP) |
+                                   (1 << State.STATE_CHANGE_EVENT_PROGRAM_DOWN) |
+                                   (1 << State.STATE_CHANGE_EVENT_MIDI_MENU) |
+                                   (1 << State.STATE_CHANGE_EVENT_ENTER_EDIT_MODE))
+    
+            self.state = state
+            self.state.blink_state = State.BLINK_ON
+            self.knob_state_change_thres = 1.0/1000.0
+            thread.start_new_thread(self.blink_handler, (0,))
+            thread.start_new_thread(self.cosmohat_listener, (0,))
+        except:
+            self.cosmohat = None
+            print "Unable to load CosmoHat module - disabling CosmoHat\n"
 
     def exit(self):
-        self.cosmohat.stop()
+        if self.cosmohat is not None:
+            self.cosmohat.stop()
         
     def cosmohat_listener(self, dummy):
         while True:
@@ -1678,6 +1879,7 @@ def debug_out(info):
 debug=False
 use_pygame=False
 use_cosmohat = True
+use_gpio = False
 use_dummy_gui = False
 try:
     opts, args = getopt.getopt(sys.argv[1:],"Ddght:")
@@ -1700,21 +1902,21 @@ for opt, arg in opts:
 
 
 midi_available_devices = [ {"name": "HOG2", 
-                            "capabilities" : "/etc/raspi-midi-controller/devices/capabilities/hog2.json", 
-                            "settings": "/etc/raspi-midi-controller/devices/settings/hog2.json"},
+                            "capabilities" : "etc/raspi-midi-controller/devices/capabilities/hog2.json", 
+                            "settings": "etc/raspi-midi-controller/devices/settings/hog2.json"},
                            {"name": "Strymon-Timeline", 
-                            "capabilities" : "/etc/raspi-midi-controller/devices/capabilities/timeline.json", 
-                            "settings": "/etc/raspi-midi-controller/devices/settings/timeline.json"} ,
+                            "capabilities" : "etc/raspi-midi-controller/devices/capabilities/timeline.json", 
+                            "settings": "etc/raspi-midi-controller/devices/settings/timeline.json"} ,
                            {"name": "Strymon-Mobius", 
-                            "capabilities" : "/etc/raspi-midi-controller/devices/capabilities/mobius.json", 
-                            "settings": "/etc/raspi-midi-controller/devices/settings/mobius.json"} ]
+                            "capabilities" : "etc/raspi-midi-controller/devices/capabilities/mobius.json", 
+                            "settings": "etc/raspi-midi-controller/devices/settings/mobius.json"} ]
 midi_devices = {}
 
 for device in midi_available_devices:
     midi_devices[device["name"]] = MidiDevice(device["capabilities"], device["settings"])
 
-song_data    = SongList("/etc/raspi-midi-controller/song-data.json", True, "/var/run/raspi-midi-controller.state", True)
-program_data = GigrigProgramList( "/etc/raspi-midi-controller/program-info.json", True )
+song_data    = SongList("etc/raspi-midi-controller/song-data.json", True, "var/run/raspi-midi-controller.state", True, midi_devices)
+program_data = GigrigProgramList( "etc/raspi-midi-controller/program-info.json", True )
 
 midi_channel = 0
 midi_controller = GigrigG2MidiController(midi_channel, False)
@@ -1730,11 +1932,14 @@ if __name__ == '__main__':
 #pdb.set_trace()
 
 state        = State(song_data, program_data, midi_devices, midi_controller)
+
 if use_cosmohat:
     input_device = InputDeviceCosmohat(state)
-else:
+elif use_gpio:
     input_device = InputDevice(state)
 
+    debug_out("Starting GUI\n")
+ 
 gui          = Gui(Gui.GUI_TYPE_DUMMY if use_dummy_gui else Gui.GUI_TYPE_PYGAME if use_pygame else Gui.GUI_TYPE_CURSES,state)
 
 
@@ -1753,10 +1958,13 @@ def manual_program_change(channel, program, state):
 midi_controller.add_midi_event_callback(manual_program_change)
 
  
+state.state_change();
+
+debug_out("Instatiating InputDeviceKeyPress\n")
+input_device_keypress = InputDeviceKeyPress(state)
 
 
 #pdb.set_trace()
-
 while (True):
     time.sleep(1.0)
     
